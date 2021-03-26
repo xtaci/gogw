@@ -1,23 +1,23 @@
-package main
+package aiohttp
 
 import (
+	"bufio"
 	"bytes"
 	"log"
 	"net"
+	"net/textproto"
 
 	"github.com/xtaci/gaio"
+)
+
+var (
+	RequestEndFlag = []byte{0xD, 0xA, 0xD, 0xA}
 )
 
 const (
 	stateRequest = iota
 	stateBody
 )
-
-type AIOHttpContext struct {
-	state int
-	buf   bytes.Buffer
-	line  []byte
-}
 
 type AIOHttpProcessor struct {
 	watcher *gaio.Watcher
@@ -33,7 +33,9 @@ func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
 // Add connection to this processor
 func (proc *AIOHttpProcessor) AddConn(conn net.Conn) (err error) {
 	ctx := new(AIOHttpContext)
-	err = proc.watcher.Read(ctx, conn, make([]byte, 128))
+	ctx.buf = new(bytes.Buffer)
+	ctx.tp = textproto.NewReader(bufio.NewReader(ctx.buf))
+	err = proc.watcher.Read(ctx, conn, make([]byte, 1024))
 	if err != nil {
 		return err
 	}
@@ -70,45 +72,31 @@ func (proc *AIOHttpProcessor) Processor() {
 }
 
 // process request
-func (context *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
-	const (
-		stateBeginLine = iota // beginning of line; initial state; must be zero
-		stateCR               // read \r (possibly at end of line)
-		stateData             // reading data in middle of line
-	)
-
+func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 	ctx := res.Context.(*AIOHttpContext)
+	ctx.buf.Write(res.Buffer[:res.Size])
 
-	bufferIdx := 0
-	for bufferIdx < res.Size {
-		c := res.Buffer[bufferIdx]
-		bufferIdx++
+	switch ctx.state {
+	case stateRequest:
+		buffer := ctx.buf.Bytes()
+		s := len(buffer) - res.Size - 3 // traceback at most 3 bytes
+		if s > 0 {
+			/* https://tools.ietf.org/html/rfc2616#page-35
+			   Request       = Request-Line              ; Section 5.1
+			                   *(( general-header        ; Section 4.5
+			                    | request-header         ; Section 5.3
+			                    | entity-header ) CRLF)  ; Section 7.1
+			                   CRLF
+			                   [ message-body ]          ; Section 4.3
+			*/
 
-		switch ctx.state {
-		case stateBeginLine:
-			ctx.state = stateData
-
-		case stateCR:
-			if c == '\n' {
-				ctx.state = stateBeginLine
-				//  TODO: process the new line
-			} else {
-				// Not part of \r\n. Emit saved \r
-				bufferIdx--
-				c = '\r'
-				ctx.state = stateData
-			}
-
-		case stateData:
-			if c == '\r' {
-				ctx.state = stateCR
-				continue
-			}
-			if c == '\n' {
-				ctx.state = stateBeginLine
+			// O(n) search of CRLF-CRLF
+			if i := bytes.Index(buffer[s:], RequestEndFlag); i != -1 {
+				// we've found CRLFCRLF
 			}
 		}
-		ctx.line = append(ctx.line, c)
+		ctx.state = stateBody
+	case stateBody:
+		ctx.state = stateRequest
 	}
-	return
 }
