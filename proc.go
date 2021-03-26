@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"log"
 	"net"
-	"net/textproto"
+	"net/http"
 
 	"github.com/xtaci/gaio"
 )
@@ -21,12 +21,14 @@ const (
 
 type AIOHttpProcessor struct {
 	watcher *gaio.Watcher
+	handler http.Handler
 }
 
 // Create processor context
-func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
+func NewAIOHttpProcessor(watcher *gaio.Watcher, handler http.Handler) *AIOHttpProcessor {
 	context := new(AIOHttpProcessor)
 	context.watcher = watcher
+	context.handler = handler
 	return context
 }
 
@@ -34,7 +36,6 @@ func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
 func (proc *AIOHttpProcessor) AddConn(conn net.Conn) (err error) {
 	ctx := new(AIOHttpContext)
 	ctx.buf = new(bytes.Buffer)
-	ctx.tp = textproto.NewReader(bufio.NewReader(ctx.buf))
 	err = proc.watcher.Read(ctx, conn, make([]byte, 1024))
 	if err != nil {
 		return err
@@ -57,15 +58,8 @@ func (proc *AIOHttpProcessor) Processor() {
 			case gaio.OpRead: // read completion event
 				if res.Error == nil {
 					proc.processRequest(&res)
-					// send back everything, we won't start to read again until write completes.
-					// submit an async write request
-					proc.watcher.Write(nil, res.Conn, res.Buffer[:res.Size])
 				}
 			case gaio.OpWrite: // write completion event
-				if res.Error == nil {
-					// since write has completed, let's start read on this conn again
-					proc.watcher.Read(nil, res.Conn, res.Buffer[:cap(res.Buffer)])
-				}
 			}
 		}
 	}
@@ -75,27 +69,33 @@ func (proc *AIOHttpProcessor) Processor() {
 func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 	ctx := res.Context.(*AIOHttpContext)
 	ctx.buf.Write(res.Buffer[:res.Size])
-
 	switch ctx.state {
 	case stateRequest:
 		buffer := ctx.buf.Bytes()
-		s := len(buffer) - res.Size - 3 // traceback at most 3 bytes
-		if s > 0 {
-			/* https://tools.ietf.org/html/rfc2616#page-35
-			   Request       = Request-Line              ; Section 5.1
-			                   *(( general-header        ; Section 4.5
-			                    | request-header         ; Section 5.3
-			                    | entity-header ) CRLF)  ; Section 7.1
-			                   CRLF
-			                   [ message-body ]          ; Section 4.3
-			*/
-
-			// O(n) search of CRLF-CRLF
-			if i := bytes.Index(buffer[s:], RequestEndFlag); i != -1 {
-				// we've found CRLFCRLF
-			}
+		s := len(buffer) - res.Size - 3 // traceback at most 3 extra bytes more
+		if s < 0 {
+			s = 0
 		}
-		ctx.state = stateBody
+		/* https://tools.ietf.org/html/rfc2616#page-35
+		   Request       = Request-Line              ; Section 5.1
+		                   *(( general-header        ; Section 4.5
+		                    | request-header         ; Section 5.3
+		                    | entity-header ) CRLF)  ; Section 7.1
+		                   CRLF
+		                   [ message-body ]          ; Section 4.3
+		*/
+
+		// O(n) search of CRLF-CRLF
+		if i := bytes.Index(buffer[s:], RequestEndFlag); i != -1 {
+			reader := bufio.NewReader(ctx.buf)
+			req, err := readRequest(reader, false)
+			if err != nil {
+				return
+			}
+
+			proc.handler.ServeHTTP(new(Response), req)
+			ctx.state = stateBody
+		}
 	case stateBody:
 		ctx.state = stateRequest
 	}
