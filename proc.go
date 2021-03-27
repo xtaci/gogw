@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	RequestEndFlag = []byte{0xD, 0xA, 0xD, 0xA}
+	HeaderEndFlag = []byte{0xD, 0xA, 0xD, 0xA}
 )
 
 const (
@@ -97,7 +97,7 @@ func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 		*/
 
 		// O(n) search of CRLF-CRLF
-		if i := bytes.Index(buffer[s:], RequestEndFlag); i != -1 {
+		if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
 			reader := bufio.NewReader(ctx.buf)
 			req, err := readRequest(reader, false)
 			if err != nil {
