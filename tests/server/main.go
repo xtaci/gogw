@@ -9,6 +9,7 @@ import (
 )
 
 func Index(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	println("in")
 	fmt.Fprint(w, "Welcome!\n")
 }
 

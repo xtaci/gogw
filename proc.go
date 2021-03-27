@@ -3,6 +3,7 @@ package aiohttp
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -104,17 +105,38 @@ func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 			ctx.req = req
 			ctx.state = stateBody
 			ctx.buf.Reset()
+			proc.readBody(ctx, res.Conn)
 		}
-
 	case stateBody:
-		if int64(ctx.buf.Len()) >= ctx.contentLength {
-			ctx.req.Body = newBodyReadCloser(ctx.buf, ctx.contentLength)
-			proc.handler.ServeHTTP(new(response), ctx.req)
-		}
+		proc.readBody(ctx, res.Conn)
 	}
 
 	err := proc.watcher.Read(ctx, res.Conn, nil)
 	if err != nil {
 		return
+	}
+}
+
+func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
+	log.Println(ctx.buf.Len(), ctx.contentLength)
+	if int64(ctx.buf.Len()) >= ctx.contentLength {
+		ctx.req.Body = newBody(ctx.buf, ctx.contentLength)
+		r := newResponse()
+		proc.handler.ServeHTTP(r, ctx.req)
+		codeText := http.StatusText(r.statusCode)
+
+		// write status code line
+		respHeader := `HTTP/1.1 %v %v 
+Date: Sat, 27 Mar 2021 04:31:57 GMT
+Server: Apache/2.2.22 (Debian)
+Vary: Accept-Encoding
+Content-Length: %v
+Connection: close
+Content-Type: text/html;charset=UTF-8
+
+`
+		//		log.Printf(fmt.Sprintf(respHeader, r.statusCode, codeText, len(r.buf.Bytes())))
+		proc.watcher.Write(ctx, conn, []byte(fmt.Sprintf(respHeader, r.statusCode, codeText, len(r.buf.Bytes()))))
+		proc.watcher.Write(ctx, conn, r.buf.Bytes())
 	}
 }

@@ -3,10 +3,10 @@ package aiohttp
 import (
 	"bytes"
 	"io"
-	"log"
 	"net/http"
 )
 
+//  AIO Http context
 type AIOHttpContext struct {
 	state         int
 	buf           *bytes.Buffer
@@ -14,25 +14,35 @@ type AIOHttpContext struct {
 	contentLength int64
 }
 
-type BodyReadCloser struct {
+// body defines a body reader
+type body struct {
 	limitedReader *io.LimitedReader
 }
 
-func newBodyReadCloser(R io.Reader, N int64) *BodyReadCloser {
-	body := new(BodyReadCloser)
-	body.limitedReader = &io.LimitedReader{R, N}
-	return body
+func newBody(R io.Reader, N int64) *body {
+	b := new(body)
+	b.limitedReader = &io.LimitedReader{R, N}
+	return b
 }
 
-func (body *BodyReadCloser) Read(p []byte) (n int, err error) {
-	return body.limitedReader.Read(p)
+func (b *body) Read(p []byte) (n int, err error) {
+	return b.limitedReader.Read(p)
 }
 
-func (body *BodyReadCloser) Close() error {
+func (*body) Close() error {
 	return nil
 }
 
+// response
 type response struct {
+	statusCode int
+	buf        *bytes.Buffer
+}
+
+func newResponse() *response {
+	res := new(response)
+	res.buf = new(bytes.Buffer)
+	return res
 }
 
 func (r *response) Header() http.Header {
@@ -40,9 +50,9 @@ func (r *response) Header() http.Header {
 }
 
 func (r *response) Write(bts []byte) (int, error) {
-	log.Println("Response", string(bts))
-	return len(bts), nil
+	return r.buf.Write(bts)
 }
 
 func (r *response) WriteHeader(statusCode int) {
+	r.statusCode = statusCode
 }
