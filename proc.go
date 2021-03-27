@@ -18,6 +18,8 @@ var (
 const (
 	stateRequest = iota
 	stateBody
+	stateWaitLastResponseSent // last response header
+	stateWaitLastBodySent
 )
 
 type AIOHttpProcessor struct {
@@ -61,6 +63,13 @@ func (proc *AIOHttpProcessor) Processor() {
 					proc.processRequest(&res)
 				}
 			case gaio.OpWrite: // write completion event
+				ctx := res.Context.(*AIOHttpContext)
+				switch ctx.state {
+				case stateWaitLastResponseSent:
+					ctx.state = stateWaitLastBodySent
+				case stateWaitLastBodySent:
+					proc.watcher.Free(res.Conn)
+				}
 			}
 		}
 	}
@@ -118,7 +127,6 @@ func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 }
 
 func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
-	log.Println(ctx.buf.Len(), ctx.contentLength)
 	if int64(ctx.buf.Len()) >= ctx.contentLength {
 		ctx.req.Body = newBody(ctx.buf, ctx.contentLength)
 		r := newResponse()
@@ -127,16 +135,14 @@ func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
 
 		// write status code line
 		respHeader := `HTTP/1.1 %v %v 
-Date: Sat, 27 Mar 2021 04:31:57 GMT
-Server: Apache/2.2.22 (Debian)
-Vary: Accept-Encoding
 Content-Length: %v
 Connection: close
-Content-Type: text/html;charset=UTF-8
 
 `
-		//		log.Printf(fmt.Sprintf(respHeader, r.statusCode, codeText, len(r.buf.Bytes())))
-		proc.watcher.Write(ctx, conn, []byte(fmt.Sprintf(respHeader, r.statusCode, codeText, len(r.buf.Bytes()))))
+		proc.watcher.Write(ctx, conn, []byte(fmt.Sprintf(respHeader, 200, codeText, len(r.buf.Bytes()))))
 		proc.watcher.Write(ctx, conn, r.buf.Bytes())
+
+		// set state to finished
+		ctx.state = stateWaitLastResponseSent
 	}
 }

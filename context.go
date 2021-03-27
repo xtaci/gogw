@@ -35,18 +35,20 @@ func (*body) Close() error {
 
 // response
 type response struct {
+	header     http.Header
 	statusCode int
 	buf        *bytes.Buffer
 }
 
 func newResponse() *response {
 	res := new(response)
+	res.header = make(http.Header)
 	res.buf = new(bytes.Buffer)
 	return res
 }
 
 func (r *response) Header() http.Header {
-	return nil
+	return r.header
 }
 
 func (r *response) Write(bts []byte) (int, error) {
