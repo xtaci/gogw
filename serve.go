@@ -8,13 +8,13 @@ import (
 )
 
 type Server struct {
-	// Addr optionally specifies the TCP address for the server to listen on,
+	// addr optionally specifies the TCP address for the server to listen on,
 	// in the form "host:port". If empty, ":http" (port 80) is used.
 	// The service names are defined in RFC 6335 and assigned by IANA.
 	// See net.Dial for details of the address format.
 	addr    string
-	handler http.Handler // handler to invoke, http.DefaultServeMux if nil
-	proc    *AIOHttpProcessor
+	handler http.Handler      // handler to invoke, http.DefaultServeMux if nil
+	proc    *AIOHttpProcessor // I/O processor
 }
 
 func ListenAndServe(addr string, handler http.Handler) error {

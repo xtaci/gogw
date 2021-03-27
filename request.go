@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -22,6 +23,105 @@ func fixPragmaCacheControl(header http.Header) {
 }
 func isNotToken(r rune) bool {
 	return !httpguts.IsTokenRune(r)
+}
+
+func noResponseBodyExpected(requestMethod string) bool {
+	return requestMethod == "HEAD"
+}
+
+// parseContentLength trims whitespace from s and returns -1 if no value
+// is set, or the value if it's >= 0.
+func parseContentLength(cl string) (int64, error) {
+	cl = textproto.TrimString(cl)
+	if cl == "" {
+		return -1, nil
+	}
+	n, err := strconv.ParseUint(cl, 10, 63)
+	if err != nil {
+		return 0, badStringError("bad Content-Length", cl)
+	}
+	return int64(n), nil
+
+}
+
+// Determine the expected body length, using RFC 7230 Section 3.3. This
+// function is not a method, because ultimately it should be shared by
+// ReadResponse and ReadRequest.
+func fixLength(isResponse bool, status int, requestMethod string, header http.Header, chunked bool) (int64, error) {
+	isRequest := !isResponse
+	contentLens := header["Content-Length"]
+
+	// Hardening against HTTP request smuggling
+	if len(contentLens) > 1 {
+		// Per RFC 7230 Section 3.3.2, prevent multiple
+		// Content-Length headers if they differ in value.
+		// If there are dups of the value, remove the dups.
+		// See Issue 16490.
+		first := textproto.TrimString(contentLens[0])
+		for _, ct := range contentLens[1:] {
+			if first != textproto.TrimString(ct) {
+				return 0, fmt.Errorf("http: message cannot contain multiple Content-Length headers; got %q", contentLens)
+			}
+		}
+
+		// deduplicate Content-Length
+		header.Del("Content-Length")
+		header.Add("Content-Length", first)
+
+		contentLens = header["Content-Length"]
+	}
+
+	// Logic based on response type or status
+	if noResponseBodyExpected(requestMethod) {
+		// For HTTP requests, as part of hardening against request
+		// smuggling (RFC 7230), don't allow a Content-Length header for
+		// methods which don't permit bodies. As an exception, allow
+		// exactly one Content-Length header if its value is "0".
+		if isRequest && len(contentLens) > 0 && !(len(contentLens) == 1 && contentLens[0] == "0") {
+			return 0, fmt.Errorf("http: method cannot contain a Content-Length; got %q", contentLens)
+		}
+		return 0, nil
+	}
+	if status/100 == 1 {
+		return 0, nil
+	}
+	switch status {
+	case 204, 304:
+		return 0, nil
+	}
+
+	// Logic based on Transfer-Encoding
+	if chunked {
+		return -1, nil
+	}
+
+	// Logic based on Content-Length
+	var cl string
+	if len(contentLens) == 1 {
+		cl = textproto.TrimString(contentLens[0])
+	}
+	if cl != "" {
+		n, err := parseContentLength(cl)
+		if err != nil {
+			return -1, err
+		}
+		return n, nil
+	}
+	header.Del("Content-Length")
+
+	if isRequest {
+		// RFC 7230 neither explicitly permits nor forbids an
+		// entity-body on a GET request so we permit one if
+		// declared, but we default to 0 here (not -1 below)
+		// if there's no mention of a body.
+		// Likewise, all other request methods are assumed to have
+		// no body if neither Transfer-Encoding chunked nor a
+		// Content-Length are set.
+		return 0, nil
+	}
+
+	// Body-EOF logic based on other methods (like closing, or chunked coding)
+	return -1, nil
 }
 
 // Determine whether to hang up after sending a request and body, or
@@ -169,22 +269,5 @@ func readRequest(b *bufio.Reader, deleteHostHeader bool) (req *http.Request, err
 
 	req.Close = shouldClose(req.ProtoMajor, req.ProtoMinor, req.Header, false)
 
-	/*
-		err = readTransfer(req, b)
-		if err != nil {
-			return nil, err
-		}
-
-		if req.isH2Upgrade() {
-			// Because it's neither chunked, nor declared:
-			req.ContentLength = -1
-
-			// We want to give handlers a chance to hijack the
-			// connection, but we need to prevent the Server from
-			// dealing with the connection further if it's not
-			// hijacked. Set Close to ensure that:
-			req.Close = true
-		}
-	*/
 	return req, nil
 }

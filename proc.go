@@ -36,7 +36,7 @@ func NewAIOHttpProcessor(watcher *gaio.Watcher, handler http.Handler) *AIOHttpPr
 func (proc *AIOHttpProcessor) AddConn(conn net.Conn) (err error) {
 	ctx := new(AIOHttpContext)
 	ctx.buf = new(bytes.Buffer)
-	err = proc.watcher.Read(ctx, conn, make([]byte, 1024))
+	err = proc.watcher.Read(ctx, conn, nil)
 	if err != nil {
 		return err
 	}
@@ -69,10 +69,11 @@ func (proc *AIOHttpProcessor) Processor() {
 func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 	ctx := res.Context.(*AIOHttpContext)
 	ctx.buf.Write(res.Buffer[:res.Size])
+
 	switch ctx.state {
 	case stateRequest:
 		buffer := ctx.buf.Bytes()
-		s := len(buffer) - res.Size - 3 // traceback at most 3 extra bytes more
+		s := len(buffer) - res.Size - 3 // traceback at most 3 extra bytes
 		if s < 0 {
 			s = 0
 		}
@@ -93,10 +94,27 @@ func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 				return
 			}
 
-			proc.handler.ServeHTTP(new(Response), req)
+			// read body length
+			n, err := fixLength(false, 200, req.Method, req.Header, false)
+			if err != nil {
+				return
+			}
+
+			ctx.contentLength = n
+			ctx.req = req
 			ctx.state = stateBody
+			ctx.buf.Reset()
 		}
+
 	case stateBody:
-		ctx.state = stateRequest
+		if int64(ctx.buf.Len()) >= ctx.contentLength {
+			ctx.req.Body = newBodyReadCloser(ctx.buf, ctx.contentLength)
+			proc.handler.ServeHTTP(new(response), ctx.req)
+		}
+	}
+
+	err := proc.watcher.Read(ctx, res.Conn, nil)
+	if err != nil {
+		return
 	}
 }
