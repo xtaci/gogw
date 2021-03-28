@@ -23,15 +23,17 @@ const (
 )
 
 type AIOHttpProcessor struct {
-	watcher *gaio.Watcher
-	handler http.Handler
+	watcher     *gaio.Watcher
+	headHandler http.Handler // head handlers
+	bodyHandler http.Handler // body handlers
 }
 
 // Create processor context
-func NewAIOHttpProcessor(watcher *gaio.Watcher, handler http.Handler) *AIOHttpProcessor {
+func NewAIOHttpProcessor(watcher *gaio.Watcher, headHandler http.Handler, bodyHandler http.Handler) *AIOHttpProcessor {
 	context := new(AIOHttpProcessor)
 	context.watcher = watcher
-	context.handler = handler
+	context.headHandler = headHandler
+	context.bodyHandler = bodyHandler
 	return context
 }
 
@@ -83,18 +85,11 @@ func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 	switch ctx.state {
 	case stateRequest:
 		buffer := ctx.buf.Bytes()
-		s := len(buffer) - res.Size - 3 // traceback at most 3 extra bytes
+		// traceback at most 3 extra bytes to locate CRLF-CRLF
+		s := len(buffer) - res.Size - 3
 		if s < 0 {
 			s = 0
 		}
-		/* https://tools.ietf.org/html/rfc2616#page-35
-		   Request       = Request-Line              ; Section 5.1
-		                   *(( general-header        ; Section 4.5
-		                    | request-header         ; Section 5.3
-		                    | entity-header ) CRLF)  ; Section 7.1
-		                   CRLF
-		                   [ message-body ]          ; Section 4.3
-		*/
 
 		// O(n) search of CRLF-CRLF
 		if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
@@ -110,10 +105,20 @@ func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 				return
 			}
 
+			// extract header fields
 			ctx.contentLength = n
 			ctx.req = req
+
+			// start to read body
 			ctx.state = stateBody
 			ctx.buf.Reset()
+
+			// callback header handler
+			if proc.headHandler != nil {
+				proc.headHandler.ServeHTTP(nil, ctx.req)
+			}
+
+			// continue to read body
 			proc.readBody(ctx, res.Conn)
 		}
 	case stateBody:
@@ -128,19 +133,17 @@ func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
 
 func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
 	if int64(ctx.buf.Len()) >= ctx.contentLength {
+		resp := newResponse()
 		ctx.req.Body = newBody(ctx.buf, ctx.contentLength)
-		r := newResponse()
-		proc.handler.ServeHTTP(r, ctx.req)
-		codeText := http.StatusText(r.statusCode)
-
+		proc.bodyHandler.ServeHTTP(resp, ctx.req)
 		// write status code line
 		respHeader := `HTTP/1.1 %v %v 
 Content-Length: %v
 Connection: close
 
 `
-		proc.watcher.Write(ctx, conn, []byte(fmt.Sprintf(respHeader, 200, codeText, len(r.buf.Bytes()))))
-		proc.watcher.Write(ctx, conn, r.buf.Bytes())
+		proc.watcher.Write(ctx, conn, []byte(fmt.Sprintf(respHeader, 200, "OK", len(resp.buf.Bytes()))))
+		proc.watcher.Write(ctx, conn, resp.buf.Bytes())
 
 		// set state to finished
 		ctx.state = stateWaitLastResponseSent

@@ -22,7 +22,7 @@ func ListenAndServe(addr string, handler http.Handler) error {
 	if err != nil {
 		return err
 	}
-	proc := NewAIOHttpProcessor(watcher, handler)
+	proc := NewAIOHttpProcessor(watcher, nil, handler)
 	server := &Server{addr: addr, handler: handler, proc: proc}
 	return server.ListenAndServe()
 }
