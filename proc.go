@@ -13,23 +13,6 @@ var (
 	HeaderEndFlag = []byte{0xD, 0xA, 0xD, 0xA}
 )
 
-type timeoutError struct{}
-
-func (e *timeoutError) Error() string {
-	return "timeout"
-}
-
-// Only implement the Timeout() function of the net.Error interface.
-// This allows for checks like:
-//
-//   if x, ok := err.(interface{ Timeout() bool }); ok && x.Timeout() {
-func (e *timeoutError) Timeout() bool {
-	return true
-}
-
-// ErrTimeout is returned from timed out calls.
-var ErrTimeout = &timeoutError{}
-
 var (
 	// a system-wide packet buffer shared among sending, receiving and FEC
 	// to mitigate high-frequency memory allocation for packets, bytes from xmitBuf
@@ -49,28 +32,25 @@ const (
 )
 
 type AIOHttpProcessor struct {
-	watcher       *gaio.Watcher
-	resultHandler ResultHandler
+	watcher *gaio.Watcher
+	die     chan struct{}
 }
-
-type ResultHandler func(ctx *AIOHttpContext, res *gaio.OpResult)
 
 // Create processor context
 func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
 	proc := new(AIOHttpProcessor)
 	proc.watcher = watcher
-	proc.resultHandler = processRequest
+	proc.die = make(chan struct{})
 	return proc
 }
 
 // Add connection to this processor
 func (proc *AIOHttpProcessor) AddConn(conn net.Conn) (err error) {
 	ctx := new(AIOHttpContext)
-	ctx.watcher = proc.watcher
 	ctx.buf = new(bytes.Buffer)
 	ctx.xmitBuf = xmitBuf.Get().(*bytes.Buffer)
-	err = proc.watcher.Read(ctx, conn, nil)
 
+	err = proc.watcher.Read(ctx, conn, nil)
 	if err != nil {
 		return err
 	}
@@ -89,11 +69,10 @@ func (proc *AIOHttpProcessor) Processor() {
 
 		for _, res := range results {
 			ctx := res.Context.(*AIOHttpContext)
-
 			switch res.Operation {
 			case gaio.OpRead: // read completion event
 				if res.Error == nil {
-					processRequest(ctx, &res)
+					proc.processRequest(ctx, &res)
 				} else {
 					proc.watcher.Free(res.Conn)
 					xmitBuf.Put(ctx.xmitBuf)
@@ -104,22 +83,13 @@ func (proc *AIOHttpProcessor) Processor() {
 					proc.watcher.Free(res.Conn)
 					xmitBuf.Put(ctx.xmitBuf)
 				}
-				/*
-					ctx := res.Context.(*AIOHttpContext)
-					switch ctx.state {
-					case stateWaitLastResponseSent:
-						ctx.state = stateWaitLastBodySent
-					case stateWaitLastBodySent:
-						proc.watcher.Free(res.Conn)
-					}
-				*/
 			}
 		}
 	}
 }
 
 // process request
-func processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
+func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
 	ctx.buf.Write(res.Buffer[:res.Size])
 
 	switch ctx.state {
@@ -143,19 +113,19 @@ func processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
 			ctx.buf.Reset()
 
 			// continue to read body
-			readBody(ctx, res.Conn)
+			proc.readBody(ctx, res.Conn)
 		}
 	case stateBody:
-		readBody(ctx, res.Conn)
+		proc.readBody(ctx, res.Conn)
 	}
 
-	err := ctx.watcher.Read(ctx, res.Conn, nil)
+	err := proc.watcher.Read(ctx, res.Conn, nil)
 	if err != nil {
 		return
 	}
 }
 
-func readBody(ctx *AIOHttpContext, conn net.Conn) {
+func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
 	var respText = "Welcome!"
 	if ctx.buf.Len() >= ctx.header.ContentLength() {
 		ctx.response.SetContentLength(len(respText))
@@ -167,7 +137,7 @@ func readBody(ctx *AIOHttpContext, conn net.Conn) {
 		ctx.xmitBuf.WriteString(respText)
 
 		// aio send
-		ctx.watcher.Write(ctx, conn, ctx.xmitBuf.Bytes())
+		proc.watcher.Write(ctx, conn, ctx.xmitBuf.Bytes())
 
 		// set state back to request
 		ctx.state = stateRequest
