@@ -15,6 +15,23 @@ var (
 	HeaderEndFlag = []byte{0xD, 0xA, 0xD, 0xA}
 )
 
+type timeoutError struct{}
+
+func (e *timeoutError) Error() string {
+	return "timeout"
+}
+
+// Only implement the Timeout() function of the net.Error interface.
+// This allows for checks like:
+//
+//   if x, ok := err.(interface{ Timeout() bool }); ok && x.Timeout() {
+func (e *timeoutError) Timeout() bool {
+	return true
+}
+
+// ErrTimeout is returned from timed out calls.
+var ErrTimeout = &timeoutError{}
+
 var (
 	// a system-wide packet buffer shared among sending, receiving and FEC
 	// to mitigate high-frequency memory allocation for packets, bytes from xmitBuf
