@@ -11,7 +11,7 @@ type AIOHttpContext struct {
 	state         int
 	buf           *bytes.Buffer
 	xmitBuf       *bytes.Buffer
-	req           *http.Request
+	header        RequestHeader
 	contentLength int64
 }
 

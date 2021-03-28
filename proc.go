@@ -120,29 +120,14 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 		// O(n) search of CRLF-CRLF
 		if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
 			reader := bufio.NewReader(ctx.buf)
-			req, err := readRequest(reader, false)
+			err := ctx.header.Read(reader)
 			if err != nil {
 				return
 			}
-
-			// read body length
-			n, err := fixLength(false, 200, req.Method, req.Header, false)
-			if err != nil {
-				return
-			}
-
-			// extract header fields
-			ctx.contentLength = n
-			ctx.req = req
 
 			// start to read body
 			ctx.state = stateBody
 			ctx.buf.Reset()
-
-			// callback header handler
-			if proc.headHandler != nil {
-				proc.headHandler.ServeHTTP(nil, ctx.req)
-			}
 
 			// continue to read body
 			proc.readBody(ctx, res.Conn)
@@ -159,9 +144,6 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 
 func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
 	if int64(ctx.buf.Len()) >= ctx.contentLength {
-		ctx.req.Body = newBody(ctx.buf, ctx.contentLength)
-		resp := newResponse()
-		proc.bodyHandler.ServeHTTP(resp, ctx.req)
 
 		// write status code line
 		respHeader := `HTTP/1.1 %v %v
@@ -170,9 +152,10 @@ Connection: Keep-Alive
 
 `
 		ctx.xmitBuf.Reset()
+		respText := "Welcome!"
 		// merge header & data
-		fmt.Fprintf(ctx.xmitBuf, respHeader, 200, "OK", len(resp.buf.Bytes()))
-		ctx.xmitBuf.Write(resp.buf.Bytes())
+		fmt.Fprintf(ctx.xmitBuf, respHeader, 200, "OK", len(respText))
+		ctx.xmitBuf.WriteString(respText)
 
 		// aio send
 		proc.watcher.Write(ctx, conn, ctx.xmitBuf.Bytes())
