@@ -2,7 +2,6 @@ package aiohttp
 
 import (
 	"net"
-	"net/http"
 
 	"github.com/xtaci/gaio"
 )
@@ -12,18 +11,17 @@ type Server struct {
 	// in the form "host:port". If empty, ":http" (port 80) is used.
 	// The service names are defined in RFC 6335 and assigned by IANA.
 	// See net.Dial for details of the address format.
-	addr    string
-	handler http.Handler      // handler to invoke, http.DefaultServeMux if nil
-	proc    *AIOHttpProcessor // I/O processor
+	addr string
+	proc *AIOHttpProcessor // I/O processor
 }
 
-func ListenAndServe(addr string, handler http.Handler) error {
+func ListenAndServe(addr string) error {
 	watcher, err := gaio.NewWatcher()
 	if err != nil {
 		return err
 	}
-	proc := NewAIOHttpProcessor(watcher, nil, handler)
-	server := &Server{addr: addr, handler: handler, proc: proc}
+	proc := NewAIOHttpProcessor(watcher)
+	server := &Server{addr: addr, proc: proc}
 	return server.ListenAndServe()
 }
 

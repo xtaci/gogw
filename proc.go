@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"sync"
 
 	"github.com/xtaci/gaio"
@@ -37,17 +36,13 @@ const (
 )
 
 type AIOHttpProcessor struct {
-	watcher     *gaio.Watcher
-	headHandler http.Handler // head checks
-	bodyHandler http.Handler // body handlers
+	watcher *gaio.Watcher
 }
 
 // Create processor context
-func NewAIOHttpProcessor(watcher *gaio.Watcher, headHandler http.Handler, bodyHandler http.Handler) *AIOHttpProcessor {
+func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
 	context := new(AIOHttpProcessor)
 	context.watcher = watcher
-	context.headHandler = headHandler
-	context.bodyHandler = bodyHandler
 	return context
 }
 
