@@ -79,7 +79,7 @@ func (proc *AIOHttpProcessor) Processor() {
 			switch res.Operation {
 			case gaio.OpRead: // read completion event
 				if res.Error == nil {
-					proc.processRequest(&res)
+					proc.processRequest(ctx, &res)
 				} else {
 					proc.watcher.Free(res.Conn)
 					xmitBuf.Put(ctx.xmitBuf)
@@ -105,8 +105,7 @@ func (proc *AIOHttpProcessor) Processor() {
 }
 
 // process request
-func (proc *AIOHttpProcessor) processRequest(res *gaio.OpResult) {
-	ctx := res.Context.(*AIOHttpContext)
+func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
 	ctx.buf.Write(res.Buffer[:res.Size])
 
 	switch ctx.state {
