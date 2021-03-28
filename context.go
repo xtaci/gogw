@@ -4,15 +4,18 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+
+	"github.com/xtaci/gaio"
 )
 
 //  AIO Http context
 type AIOHttpContext struct {
-	state         int
-	buf           *bytes.Buffer
-	xmitBuf       *bytes.Buffer
-	header        RequestHeader
-	contentLength int64
+	state    int
+	buf      *bytes.Buffer
+	xmitBuf  *bytes.Buffer
+	watcher  *gaio.Watcher
+	header   RequestHeader
+	response ResponseHeader
 }
 
 // body defines a body reader

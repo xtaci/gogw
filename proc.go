@@ -1,9 +1,7 @@
 package aiohttp
 
 import (
-	"bufio"
 	"bytes"
-	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -48,27 +46,31 @@ func init() {
 const (
 	stateRequest = iota
 	stateBody
-	stateWaitLastResponseSent // last response header
-	stateWaitLastBodySent
 )
 
 type AIOHttpProcessor struct {
-	watcher *gaio.Watcher
+	watcher       *gaio.Watcher
+	resultHandler ResultHandler
 }
+
+type ResultHandler func(ctx *AIOHttpContext, res *gaio.OpResult)
 
 // Create processor context
 func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
-	context := new(AIOHttpProcessor)
-	context.watcher = watcher
-	return context
+	proc := new(AIOHttpProcessor)
+	proc.watcher = watcher
+	proc.resultHandler = processRequest
+	return proc
 }
 
 // Add connection to this processor
 func (proc *AIOHttpProcessor) AddConn(conn net.Conn) (err error) {
 	ctx := new(AIOHttpContext)
+	ctx.watcher = proc.watcher
 	ctx.buf = new(bytes.Buffer)
 	ctx.xmitBuf = xmitBuf.Get().(*bytes.Buffer)
 	err = proc.watcher.Read(ctx, conn, nil)
+
 	if err != nil {
 		return err
 	}
@@ -91,7 +93,7 @@ func (proc *AIOHttpProcessor) Processor() {
 			switch res.Operation {
 			case gaio.OpRead: // read completion event
 				if res.Error == nil {
-					proc.processRequest(ctx, &res)
+					processRequest(ctx, &res)
 				} else {
 					proc.watcher.Free(res.Conn)
 					xmitBuf.Put(ctx.xmitBuf)
@@ -117,7 +119,7 @@ func (proc *AIOHttpProcessor) Processor() {
 }
 
 // process request
-func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
+func processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
 	ctx.buf.Write(res.Buffer[:res.Size])
 
 	switch ctx.state {
@@ -131,8 +133,7 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 
 		// O(n) search of CRLF-CRLF
 		if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
-			reader := bufio.NewReader(ctx.buf)
-			err := ctx.header.Read(reader)
+			_, err := ctx.header.parse(ctx.buf.Bytes())
 			if err != nil {
 				return
 			}
@@ -142,37 +143,33 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 			ctx.buf.Reset()
 
 			// continue to read body
-			proc.readBody(ctx, res.Conn)
+			readBody(ctx, res.Conn)
 		}
 	case stateBody:
-		proc.readBody(ctx, res.Conn)
+		readBody(ctx, res.Conn)
 	}
 
-	err := proc.watcher.Read(ctx, res.Conn, nil)
+	err := ctx.watcher.Read(ctx, res.Conn, nil)
 	if err != nil {
 		return
 	}
 }
 
-func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
-	if int64(ctx.buf.Len()) >= ctx.contentLength {
+func readBody(ctx *AIOHttpContext, conn net.Conn) {
+	var respText = "Welcome!"
+	if ctx.buf.Len() >= ctx.header.ContentLength() {
+		ctx.response.SetContentLength(len(respText))
+		ctx.response.SetStatusCode(200)
+		ctx.response.Set("Connection:", "Keep-Alive")
 
-		// write status code line
-		respHeader := `HTTP/1.1 %v %v
-Content-Length: %v
-Connection: Keep-Alive
-
-`
 		ctx.xmitBuf.Reset()
-		respText := "Welcome!"
-		// merge header & data
-		fmt.Fprintf(ctx.xmitBuf, respHeader, 200, "OK", len(respText))
+		ctx.xmitBuf.Write(ctx.response.Header())
 		ctx.xmitBuf.WriteString(respText)
 
 		// aio send
-		proc.watcher.Write(ctx, conn, ctx.xmitBuf.Bytes())
+		ctx.watcher.Write(ctx, conn, ctx.xmitBuf.Bytes())
 
-		// set state to finished
+		// set state back to request
 		ctx.state = stateRequest
 	}
 }
