@@ -10,6 +10,7 @@ import (
 type AIOHttpContext struct {
 	state         int
 	buf           *bytes.Buffer
+	xmitBuf       *bytes.Buffer
 	req           *http.Request
 	contentLength int64
 }
