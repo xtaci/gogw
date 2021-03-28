@@ -3,6 +3,7 @@ package aiohttp
 import (
 	"net"
 
+	reuse "github.com/libp2p/go-reuseport"
 	"github.com/xtaci/gaio"
 )
 
@@ -21,8 +22,12 @@ func ListenAndServe(addr string) error {
 		return err
 	}
 	proc := NewAIOHttpProcessor(watcher)
-	server := &Server{addr: addr, proc: proc}
-	return server.ListenAndServe()
+
+	for i := 0; i < 4; i++ {
+		server := &Server{addr: addr, proc: proc}
+		server.ListenAndServe()
+	}
+	return nil
 }
 
 func (srv *Server) ListenAndServe() error {
@@ -31,7 +36,7 @@ func (srv *Server) ListenAndServe() error {
 		addr = ":http"
 	}
 
-	ln, err := net.Listen("tcp", addr)
+	ln, err := reuse.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
