@@ -45,16 +45,11 @@ func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
 }
 
 // Add connection to this processor
-func (proc *AIOHttpProcessor) AddConn(conn net.Conn) (err error) {
+func (proc *AIOHttpProcessor) AddConn(conn net.Conn) error {
 	ctx := new(AIOHttpContext)
 	ctx.buf = new(bytes.Buffer)
 	ctx.xmitBuf = xmitBuf.Get().(*bytes.Buffer)
-
-	err = proc.watcher.Read(ctx, conn, nil)
-	if err != nil {
-		return err
-	}
-	return nil
+	return proc.watcher.Read(ctx, conn, nil)
 }
 
 // Processor loop

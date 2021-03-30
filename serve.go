@@ -16,14 +16,13 @@ type Server struct {
 	proc *AIOHttpProcessor // I/O processor
 }
 
-func ListenAndServe(addr string) error {
-	watcher, err := gaio.NewWatcher()
-	if err != nil {
-		return err
-	}
-	proc := NewAIOHttpProcessor(watcher)
-
-	for i := 0; i < 4; i++ {
+func ListenAndServe(addr string, numServer int, bufSize int) error {
+	for i := 0; i < numServer; i++ {
+		watcher, err := gaio.NewWatcherSize(bufSize)
+		if err != nil {
+			return err
+		}
+		proc := NewAIOHttpProcessor(watcher)
 		server := &Server{addr: addr, proc: proc}
 		server.ListenAndServe()
 	}
