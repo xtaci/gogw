@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"log"
 	"net"
-	"sync"
 
 	"github.com/xtaci/gaio"
 )
@@ -13,23 +12,16 @@ var (
 	HeaderEndFlag = []byte{0xD, 0xA, 0xD, 0xA}
 )
 
-var (
-	// a system-wide packet buffer shared among sending, receiving and FEC
-	// to mitigate high-frequency memory allocation for packets, bytes from xmitBuf
-	// is aligned to 64bit
-	xmitBuf sync.Pool
-)
-
-func init() {
-	xmitBuf.New = func() interface{} {
-		return new(bytes.Buffer)
-	}
-}
-
 const (
 	stateRequest = iota
 	stateBody
 )
+
+type responseData struct {
+	ctx  *AIOHttpContext
+	conn net.Conn
+	buf  []byte
+}
 
 type AIOHttpProcessor struct {
 	watcher *gaio.Watcher
@@ -48,7 +40,6 @@ func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
 func (proc *AIOHttpProcessor) AddConn(conn net.Conn) error {
 	ctx := new(AIOHttpContext)
 	ctx.buf = new(bytes.Buffer)
-	ctx.xmitBuf = xmitBuf.Get().(*bytes.Buffer)
 	return proc.watcher.Read(ctx, conn, nil)
 }
 
@@ -69,13 +60,11 @@ func (proc *AIOHttpProcessor) Processor() {
 					proc.processRequest(ctx, &res)
 				} else {
 					proc.watcher.Free(res.Conn)
-					xmitBuf.Put(ctx.xmitBuf)
 				}
 			} else {
 				if res.Error == nil {
 				} else {
 					proc.watcher.Free(res.Conn)
-					xmitBuf.Put(ctx.xmitBuf)
 				}
 			}
 		}
@@ -96,6 +85,7 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 
 		// O(n) search of CRLF-CRLF
 		if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
+			ctx.header.Reset()
 			_, err := ctx.header.parse(ctx.buf.Bytes())
 			if err != nil {
 				return
@@ -121,16 +111,12 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
 	var respText = "Welcome!"
 	if ctx.buf.Len() >= ctx.header.ContentLength() {
+		ctx.response.Reset()
 		ctx.response.SetContentLength(len(respText))
 		ctx.response.SetStatusCode(200)
 		ctx.response.Set("Connection:", "Keep-Alive")
-
-		ctx.xmitBuf.Reset()
-		ctx.xmitBuf.Write(ctx.response.Header())
-		ctx.xmitBuf.WriteString(respText)
-
 		// aio send
-		proc.watcher.Write(ctx, conn, ctx.xmitBuf.Bytes())
+		proc.watcher.Write(ctx, conn, append(ctx.response.Header(), []byte(respText)...))
 
 		// set state back to request
 		ctx.state = stateRequest

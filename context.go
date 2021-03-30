@@ -25,7 +25,6 @@ var ErrTimeout = &timeoutError{}
 type AIOHttpContext struct {
 	state    int
 	buf      *bytes.Buffer
-	xmitBuf  *bytes.Buffer
 	header   RequestHeader
 	response ResponseHeader
 }
