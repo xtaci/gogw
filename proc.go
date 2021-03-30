@@ -69,15 +69,14 @@ func (proc *AIOHttpProcessor) Processor() {
 
 		for _, res := range results {
 			ctx := res.Context.(*AIOHttpContext)
-			switch res.Operation {
-			case gaio.OpRead: // read completion event
+			if res.Operation == gaio.OpRead {
 				if res.Error == nil {
 					proc.processRequest(ctx, &res)
 				} else {
 					proc.watcher.Free(res.Conn)
 					xmitBuf.Put(ctx.xmitBuf)
 				}
-			case gaio.OpWrite: // write completion event
+			} else {
 				if res.Error == nil {
 				} else {
 					proc.watcher.Free(res.Conn)
@@ -92,8 +91,7 @@ func (proc *AIOHttpProcessor) Processor() {
 func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
 	ctx.buf.Write(res.Buffer[:res.Size])
 
-	switch ctx.state {
-	case stateRequest:
+	if ctx.state == stateRequest {
 		buffer := ctx.buf.Bytes()
 		// traceback at most 3 extra bytes to locate CRLF-CRLF
 		s := len(buffer) - res.Size - 3
@@ -115,7 +113,7 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 			// continue to read body
 			proc.readBody(ctx, res.Conn)
 		}
-	case stateBody:
+	} else if ctx.state == stateBody {
 		proc.readBody(ctx, res.Conn)
 	}
 
