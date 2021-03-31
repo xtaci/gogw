@@ -54,14 +54,14 @@ func (proc *AIOHttpProcessor) Processor() {
 		}
 
 		for _, res := range results {
-			ctx := res.Context.(*AIOHttpContext)
 			if res.Operation == gaio.OpRead {
+				ctx := res.Context.(*AIOHttpContext)
 				if res.Error == nil {
 					proc.processRequest(ctx, &res)
 				} else {
 					proc.watcher.Free(res.Conn)
 				}
-			} else {
+			} else if res.Operation == gaio.OpWrite {
 				if res.Error == nil {
 				} else {
 					proc.watcher.Free(res.Conn)
