@@ -102,10 +102,7 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 		proc.readBody(ctx, res.Conn)
 	}
 
-	err := proc.watcher.Read(ctx, res.Conn, nil)
-	if err != nil {
-		return
-	}
+	proc.watcher.Read(ctx, res.Conn, nil)
 }
 
 func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
