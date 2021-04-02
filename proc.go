@@ -58,6 +58,8 @@ func (proc *AIOHttpProcessor) StartProcessor() {
 				if res.Operation == gaio.OpRead {
 					ctx := res.Context.(*AIOHttpContext)
 					if res.Error == nil {
+						ctx.buf.Write(res.Buffer[:res.Size])
+						proc.watcher.Read(ctx, res.Conn, nil)
 						proc.processRequest(ctx, &res)
 					} else {
 						proc.watcher.Free(res.Conn)
@@ -75,8 +77,6 @@ func (proc *AIOHttpProcessor) StartProcessor() {
 
 // process request
 func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
-	ctx.buf.Write(res.Buffer[:res.Size])
-	proc.watcher.Read(ctx, res.Conn, nil)
 
 	if ctx.state == stateRequest {
 		buffer := ctx.buf.Bytes()
