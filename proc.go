@@ -44,31 +44,33 @@ func (proc *AIOHttpProcessor) AddConn(conn net.Conn) error {
 }
 
 // Processor loop
-func (proc *AIOHttpProcessor) Processor() {
-	for {
-		// loop wait for any IO events
-		results, err := proc.watcher.WaitIO()
-		if err != nil {
-			log.Println(err)
-			return
-		}
+func (proc *AIOHttpProcessor) StartProcessor() {
+	go func() {
+		for {
+			// loop wait for any IO events
+			results, err := proc.watcher.WaitIO()
+			if err != nil {
+				log.Println(err)
+				return
+			}
 
-		for _, res := range results {
-			if res.Operation == gaio.OpRead {
-				ctx := res.Context.(*AIOHttpContext)
-				if res.Error == nil {
-					proc.processRequest(ctx, &res)
-				} else {
-					proc.watcher.Free(res.Conn)
-				}
-			} else if res.Operation == gaio.OpWrite {
-				if res.Error == nil {
-				} else {
-					proc.watcher.Free(res.Conn)
+			for _, res := range results {
+				if res.Operation == gaio.OpRead {
+					ctx := res.Context.(*AIOHttpContext)
+					if res.Error == nil {
+						proc.processRequest(ctx, &res)
+					} else {
+						proc.watcher.Free(res.Conn)
+					}
+				} else if res.Operation == gaio.OpWrite {
+					if res.Error == nil {
+					} else {
+						proc.watcher.Free(res.Conn)
+					}
 				}
 			}
 		}
-	}
+	}()
 }
 
 // process request

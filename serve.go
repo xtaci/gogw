@@ -1,6 +1,7 @@
 package aiohttp
 
 import (
+	"log"
 	"net"
 
 	reuse "github.com/libp2p/go-reuseport"
@@ -24,8 +25,10 @@ func ListenAndServe(addr string, numServer int, bufSize int) error {
 		}
 		proc := NewAIOHttpProcessor(watcher)
 		server := &Server{addr: addr, proc: proc}
-		server.ListenAndServe()
+		go server.ListenAndServe()
+		log.Println(i)
 	}
+	select {}
 	return nil
 }
 
@@ -41,7 +44,7 @@ func (srv *Server) ListenAndServe() error {
 	}
 
 	// start processor loop
-	go srv.proc.Processor()
+	srv.proc.StartProcessor()
 
 	return srv.Serve(ln)
 }
