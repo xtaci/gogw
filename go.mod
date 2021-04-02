@@ -6,5 +6,5 @@ require (
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/libp2p/go-reuseport v0.0.2
 	github.com/valyala/bytebufferpool v1.0.0
-	github.com/xtaci/gaio v1.2.9-0.20210331121857-cd7a944d0ad6
+	github.com/xtaci/gaio v1.2.10-0.20210402142213-2cbd4a6deede
 )

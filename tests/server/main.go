@@ -10,8 +10,8 @@ import (
 
 func main() {
 	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
+		log.Println(http.ListenAndServe(":6060", nil))
 	}()
 
-	aiohttp.ListenAndServe(":8080", 4, 1024*1024)
+	aiohttp.ListenAndServe(":8080", 16, 256*1024*1024)
 }
