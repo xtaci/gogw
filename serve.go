@@ -26,7 +26,10 @@ func ListenAndServe(addr string, numServer int, bufSize int) error {
 		proc := NewAIOHttpProcessor(watcher)
 		server := &Server{addr: addr, proc: proc}
 		go server.ListenAndServe()
-		log.Println(i)
+		// setting watcher affinity
+		watcher.SetLoopAffinity(i * 2)
+		watcher.SetPollerAffinity(i*2 + 1)
+		log.Println("affinity set:", i*2, i*2+1)
 	}
 	select {}
 	return nil

@@ -13,5 +13,5 @@ func main() {
 		log.Println(http.ListenAndServe(":6060", nil))
 	}()
 
-	aiohttp.ListenAndServe(":8080", 1, 256*1024*1024)
+	aiohttp.ListenAndServe(":8080", 4, 256*1024*1024)
 }
