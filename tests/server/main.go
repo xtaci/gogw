@@ -13,5 +13,9 @@ func main() {
 		log.Println(http.ListenAndServe(":6060", nil))
 	}()
 
-	aiohttp.ListenAndServe(":8080", 4, 256*1024*1024)
+	for i := 0; i < 4; i++ {
+		go aiohttp.ListenAndServe(":8080", i, 256*1024*1024)
+	}
+
+	select {}
 }

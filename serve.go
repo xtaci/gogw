@@ -17,22 +17,18 @@ type Server struct {
 	proc *AIOHttpProcessor // I/O processor
 }
 
-func ListenAndServe(addr string, numServer int, bufSize int) error {
-	for i := 0; i < numServer; i++ {
-		watcher, err := gaio.NewWatcherSize(bufSize)
-		if err != nil {
-			return err
-		}
-		proc := NewAIOHttpProcessor(watcher)
-		server := &Server{addr: addr, proc: proc}
-		go server.ListenAndServe()
-		// setting watcher affinity
-		watcher.SetLoopAffinity(i * 2)
-		watcher.SetPollerAffinity(i*2 + 1)
-		log.Println("affinity set:", i*2, i*2+1)
+func ListenAndServe(addr string, cpuid int, bufSize int) error {
+	watcher, err := gaio.NewWatcherSize(bufSize)
+	if err != nil {
+		return err
 	}
-	select {}
-	return nil
+	proc := NewAIOHttpProcessor(watcher)
+	server := &Server{addr: addr, proc: proc}
+	// setting watcher affinity
+	watcher.SetLoopAffinity(cpuid)
+	watcher.SetPollerAffinity(cpuid)
+	log.Println("affinity set:", cpuid)
+	return server.ListenAndServe()
 }
 
 func (srv *Server) ListenAndServe() error {
