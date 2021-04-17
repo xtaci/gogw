@@ -9,11 +9,12 @@ import (
 )
 
 func main() {
+	const numServer = 2
 	go func() {
 		log.Println(http.ListenAndServe(":6060", nil))
 	}()
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < numServer; i++ {
 		go aiohttp.ListenAndServe(":8080", i, 256*1024*1024)
 	}
 
