@@ -114,7 +114,7 @@ func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
 		ctx.response.Reset()
 		ctx.response.SetContentLength(len(respText))
 		ctx.response.SetStatusCode(200)
-		ctx.response.Set("Connection:", "Keep-Alive")
+		ctx.response.Set("Connection", "Keep-Alive")
 		// aio send
 		proc.watcher.Write(ctx, conn, append(ctx.response.Header(), []byte(respText)...))
 
