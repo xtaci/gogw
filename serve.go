@@ -17,12 +17,12 @@ type Server struct {
 	proc *AIOHttpProcessor // I/O processor
 }
 
-func ListenAndServe(addr string, cpuid int, bufSize int) error {
+func ListenAndServe(addr string, cpuid int, bufSize int, handler RequestHandler) error {
 	watcher, err := gaio.NewWatcherSize(bufSize)
 	if err != nil {
 		return err
 	}
-	proc := NewAIOHttpProcessor(watcher)
+	proc := NewAIOHttpProcessor(watcher, handler)
 	server := &Server{addr: addr, proc: proc}
 	// setting watcher affinity
 	watcher.SetLoopAffinity(cpuid)

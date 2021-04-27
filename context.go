@@ -23,9 +23,11 @@ var ErrTimeout = &timeoutError{}
 
 //  AIO Http context
 type AIOHttpContext struct {
-	state      int
-	buf        *bytes.Buffer
-	headerSize int
-	header     RequestHeader
-	response   ResponseHeader
+	state        int
+	buf          *bytes.Buffer
+	URI          URI
+	headerSize   int
+	Header       RequestHeader
+	Response     ResponseHeader
+	ResponseData []byte
 }

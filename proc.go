@@ -2,6 +2,7 @@ package aiohttp
 
 import (
 	"bytes"
+	"io"
 	"log"
 	"net"
 
@@ -17,22 +18,19 @@ const (
 	stateBody
 )
 
-type responseData struct {
-	ctx  *AIOHttpContext
-	conn net.Conn
-	buf  []byte
-}
-
+type RequestHandler func(*AIOHttpContext)
 type AIOHttpProcessor struct {
 	watcher *gaio.Watcher
 	die     chan struct{}
+	handler RequestHandler
 }
 
 // Create processor context
-func NewAIOHttpProcessor(watcher *gaio.Watcher) *AIOHttpProcessor {
+func NewAIOHttpProcessor(watcher *gaio.Watcher, handler RequestHandler) *AIOHttpProcessor {
 	proc := new(AIOHttpProcessor)
 	proc.watcher = watcher
 	proc.die = make(chan struct{})
+	proc.handler = handler
 	return proc
 }
 
@@ -95,13 +93,17 @@ func (proc *AIOHttpProcessor) readHeader(ctx *AIOHttpContext, res *gaio.OpResult
 
 	// O(n) search of CRLF-CRLF
 	if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
-		ctx.headerSize = s + i
-		ctx.header.Reset()
-		_, err := ctx.header.parse(ctx.buf.Bytes())
+		ctx.headerSize = s + i + len(HeaderEndFlag)
+		ctx.Header.Reset()
+		_, err := ctx.Header.parse(ctx.buf.Bytes())
 		if err != nil {
 			//	log.Println(err)
 			return
 		}
+
+		// set URI
+		ctx.URI.Reset()
+		ctx.URI.Parse(nil, ctx.Header.RequestURI())
 
 		// start to read body
 		ctx.state = stateBody
@@ -113,20 +115,28 @@ func (proc *AIOHttpProcessor) readHeader(ctx *AIOHttpContext, res *gaio.OpResult
 
 func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, res *gaio.OpResult) {
 	// read body data
-	if ctx.buf.Len()+ctx.headerSize < ctx.header.ContentLength() {
+	if ctx.buf.Len()+ctx.headerSize < ctx.Header.ContentLength() {
 		return
 	}
 
-	// Process full request
-	// TODO: handler
-	var respText = "Welcome!"
-	ctx.response.Reset()
-	ctx.response.SetContentLength(len(respText))
-	ctx.response.SetStatusCode(200)
-	ctx.response.Set("Connection", "Keep-Alive")
-	// aio send
-	proc.watcher.Write(ctx, res.Conn, append(ctx.response.Header(), []byte(respText)...))
+	// process request
+	ctx.Response.Reset()
+	proc.handler(ctx)
+
+	if ctx.ResponseData != nil {
+		ctx.Response.SetContentLength(len(ctx.ResponseData))
+	}
+	ctx.Response.Set("Connection", "Keep-Alive")
+
+	proc.watcher.Write(ctx, res.Conn, append(ctx.Response.Header(), ctx.ResponseData...))
 
 	// set state back to header
 	ctx.state = stateHeader
+
+	// discard buffer
+	if ctx.Header.ContentLength() > 0 {
+		io.CopyN(io.Discard, ctx.buf, int64(ctx.headerSize+ctx.Header.ContentLength()))
+	} else {
+		io.CopyN(io.Discard, ctx.buf, int64(ctx.headerSize))
+	}
 }
