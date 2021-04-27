@@ -13,7 +13,7 @@ var (
 )
 
 const (
-	stateRequest = iota
+	stateHeader = iota
 	stateBody
 )
 
@@ -77,48 +77,56 @@ func (proc *AIOHttpProcessor) StartProcessor() {
 
 // process request
 func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
-
-	if ctx.state == stateRequest {
-		buffer := ctx.buf.Bytes()
-		// traceback at most 3 extra bytes to locate CRLF-CRLF
-		s := len(buffer) - res.Size - 3
-		if s < 0 {
-			s = 0
-		}
-
-		// O(n) search of CRLF-CRLF
-		if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
-			ctx.header.Reset()
-			_, err := ctx.header.parse(ctx.buf.Bytes())
-			if err != nil {
-				//	log.Println(err)
-				return
-			}
-
-			// start to read body
-			ctx.state = stateBody
-			ctx.buf.Reset()
-
-			// continue to read body
-			proc.readBody(ctx, res.Conn)
-		}
+	if ctx.state == stateHeader {
+		proc.readHeader(ctx, res)
 	} else if ctx.state == stateBody {
-		proc.readBody(ctx, res.Conn)
+		proc.readBody(ctx, res)
 	}
-
 }
 
-func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, conn net.Conn) {
-	var respText = "Welcome!"
-	if ctx.buf.Len() >= ctx.header.ContentLength() {
-		ctx.response.Reset()
-		ctx.response.SetContentLength(len(respText))
-		ctx.response.SetStatusCode(200)
-		ctx.response.Set("Connection", "Keep-Alive")
-		// aio send
-		proc.watcher.Write(ctx, conn, append(ctx.response.Header(), []byte(respText)...))
-
-		// set state back to request
-		ctx.state = stateRequest
+// read header fields
+func (proc *AIOHttpProcessor) readHeader(ctx *AIOHttpContext, res *gaio.OpResult) {
+	buffer := ctx.buf.Bytes()
+	// traceback at most 3 extra bytes to locate CRLF-CRLF
+	s := len(buffer) - res.Size - 3
+	if s < 0 {
+		s = 0
 	}
+
+	// O(n) search of CRLF-CRLF
+	if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
+		ctx.headerSize = s + i
+		ctx.header.Reset()
+		_, err := ctx.header.parse(ctx.buf.Bytes())
+		if err != nil {
+			//	log.Println(err)
+			return
+		}
+
+		// start to read body
+		ctx.state = stateBody
+
+		// continue to read body
+		proc.readBody(ctx, res)
+	}
+}
+
+func (proc *AIOHttpProcessor) readBody(ctx *AIOHttpContext, res *gaio.OpResult) {
+	// read body data
+	if ctx.buf.Len()+ctx.headerSize < ctx.header.ContentLength() {
+		return
+	}
+
+	// Process full request
+	// TODO: handler
+	var respText = "Welcome!"
+	ctx.response.Reset()
+	ctx.response.SetContentLength(len(respText))
+	ctx.response.SetStatusCode(200)
+	ctx.response.Set("Connection", "Keep-Alive")
+	// aio send
+	proc.watcher.Write(ctx, res.Conn, append(ctx.response.Header(), []byte(respText)...))
+
+	// set state back to header
+	ctx.state = stateHeader
 }
