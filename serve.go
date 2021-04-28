@@ -27,7 +27,7 @@ func ListenAndServe(addr string, cpuid int, bufSize int, handler RequestHandler)
 	// setting watcher affinity
 	watcher.SetLoopAffinity(cpuid)
 	watcher.SetPollerAffinity(cpuid)
-	log.Println("affinity set:", cpuid)
+	log.Println("affinity set:", cpuid, cpuid)
 	return server.ListenAndServe()
 }
 
