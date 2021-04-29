@@ -15,6 +15,12 @@ github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6Kllzaw
 github.com/valyala/bytebufferpool v1.0.0/go.mod h1:6bBcMArwyJ5K/AmCkWv1jt77kVWyCJ6HpOuEn7z0Csc=
 github.com/xtaci/gaio v1.2.10-0.20210428165534-594d0bf7cfee h1:5+zPwJko1s+rXt8HOsXZI+nosKUtGWMlVgYz61LUvHU=
 github.com/xtaci/gaio v1.2.10-0.20210428165534-594d0bf7cfee/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
+github.com/xtaci/gaio v1.2.10-0.20210429040522-bbbdacb28b3a h1:MJe8npVjoVBHFIKN5eyP/omcPq+E9iHJ+j6YT7ngk+E=
+github.com/xtaci/gaio v1.2.10-0.20210429040522-bbbdacb28b3a/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
+github.com/xtaci/gaio v1.2.10-0.20210429040758-e29a76908f00 h1:dHeV4APJO+P/J0/e6nig/3rmCGdTvtpzFKctPkkFZtI=
+github.com/xtaci/gaio v1.2.10-0.20210429040758-e29a76908f00/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
+github.com/xtaci/gaio v1.2.10-0.20210429041340-09c1b9affee7 h1:bQabfkU7PReMyPunbtLmCAU0pMi29QS2xrAn55C0g0o=
+github.com/xtaci/gaio v1.2.10-0.20210429041340-09c1b9affee7/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
 golang.org/x/sys v0.0.0-20190228124157-a34e9553db1e h1:ZytStCyV048ZqDsWHiYDdoI2Vd4msMcrDECFxS+tL9c=
 golang.org/x/sys v0.0.0-20190228124157-a34e9553db1e/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=

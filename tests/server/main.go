@@ -20,7 +20,7 @@ func handler(ctx *aiohttp.AIOHttpContext) {
 }
 
 func main() {
-	const numServer = 8
+	const numServer = 4
 	go func() {
 		log.Println(http.ListenAndServe(":6060", nil))
 	}()
