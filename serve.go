@@ -25,9 +25,9 @@ func ListenAndServe(addr string, cpuid int, bufSize int, handler RequestHandler)
 	proc := NewAIOHttpProcessor(watcher, handler)
 	server := &Server{addr: addr, proc: proc}
 	// setting watcher affinity
-	watcher.SetLoopAffinity(cpuid)
-	watcher.SetPollerAffinity(cpuid)
-	log.Println("affinity set:", cpuid, cpuid)
+	watcher.SetLoopAffinity(cpuid * 2)
+	watcher.SetPollerAffinity(cpuid*2 + 1)
+	log.Println("affinity set:", cpuid*2, cpuid*2+1)
 	return server.ListenAndServe()
 }
 
