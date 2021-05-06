@@ -1,9 +1,6 @@
 package aiohttp
 
 import (
-	"log"
-	"net"
-
 	reuse "github.com/libp2p/go-reuseport"
 	"github.com/xtaci/gaio"
 )
@@ -13,22 +10,27 @@ type Server struct {
 	// in the form "host:port". If empty, ":http" (port 80) is used.
 	// The service names are defined in RFC 6335 and assigned by IANA.
 	// See net.Dial for details of the address format.
-	addr string
-	proc *AIOHttpProcessor // I/O processor
+	addr    string
+	proc    *AIOHttpProcessor // I/O processor
+	watcher *gaio.Watcher
 }
 
-func ListenAndServe(addr string, cpuid int, bufSize int, handler RequestHandler) error {
+func NewServer(addr string, bufSize int, handler RequestHandler) (*Server, error) {
 	watcher, err := gaio.NewWatcherSize(bufSize)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	proc := NewAIOHttpProcessor(watcher, handler)
-	server := &Server{addr: addr, proc: proc}
-	// setting watcher affinity
-	watcher.SetLoopAffinity(cpuid * 2)
-	watcher.SetPollerAffinity(cpuid*2 + 1)
-	log.Println("affinity set:", cpuid*2, cpuid*2+1)
-	return server.ListenAndServe()
+	server := &Server{addr: addr, proc: proc, watcher: watcher}
+	return server, nil
+}
+
+func (srv *Server) SetLoopAffinity(cpuid int) error {
+	return srv.watcher.SetLoopAffinity(cpuid)
+}
+
+func (srv *Server) SetPoolerAffinity(cpuid int) error {
+	return srv.watcher.SetPollerAffinity(cpuid)
 }
 
 func (srv *Server) ListenAndServe() error {
@@ -45,10 +47,6 @@ func (srv *Server) ListenAndServe() error {
 	// start processor loop
 	srv.proc.StartProcessor()
 
-	return srv.Serve(ln)
-}
-
-func (srv *Server) Serve(ln net.Listener) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {

@@ -26,7 +26,13 @@ func main() {
 	}()
 
 	for i := 0; i < numServer; i++ {
-		go aiohttp.ListenAndServe(":8080", i, 256*1024*1024, handler)
+		server, err := aiohttp.NewServer(":8080", 256*1024*1024, handler)
+		if err != nil {
+			panic(err)
+		}
+		server.SetLoopAffinity(i * 2)
+		server.SetPoolerAffinity(i * 2)
+		go server.ListenAndServe()
 	}
 
 	select {}
