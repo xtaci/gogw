@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -8,7 +9,11 @@ import (
 	"github.com/xtaci/aiohttp"
 )
 
-func handler(ctx *aiohttp.AIOHttpContext) {
+var (
+	errPath = errors.New("incorrect path")
+)
+
+func handler(ctx *aiohttp.AIOHttpContext) error {
 	switch string(ctx.URI.Path()) {
 	case "/":
 		ctx.Response.SetStatusCode(200)
@@ -16,7 +21,10 @@ func handler(ctx *aiohttp.AIOHttpContext) {
 	default:
 		ctx.Response.SetStatusCode(404)
 		ctx.ResponseData = []byte("Not Found")
+
+		return errPath
 	}
+	return nil
 }
 
 func main() {

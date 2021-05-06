@@ -19,7 +19,7 @@ const (
 	stateBody
 )
 
-type RequestHandler func(*AIOHttpContext)
+type RequestHandler func(*AIOHttpContext) error
 type AIOHttpProcessor struct {
 	watcher *gaio.Watcher
 	die     chan struct{}
@@ -76,8 +76,7 @@ func (proc *AIOHttpProcessor) StartProcessor() {
 						proc.watcher.Free(res.Conn)
 					}
 				} else if res.Operation == gaio.OpWrite {
-					if res.Error == nil {
-					} else {
+					if res.Error != nil {
 						proc.watcher.Free(res.Conn)
 					}
 				}
@@ -119,10 +118,12 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 		ctx.buf.Write(res.Buffer[:res.Size])
 
 		// try process header
-		proc.procHeader(ctx, res)
-
-		// initiate next reading
-		proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
+		if err := proc.procHeader(ctx, res); err == nil {
+			// initiate next reading
+			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
+		} else {
+			proc.watcher.Free(res.Conn)
+		}
 	} else if ctx.state == stateBody {
 		// body size limit
 		if ctx.buf.Len() > proc.maximumBodySize {
@@ -134,16 +135,17 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 		ctx.buf.Write(res.Buffer[:res.Size])
 
 		// try process body
-		proc.procBody(ctx, res)
-
-		// initiate next reading
-		proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
+		if err := proc.procBody(ctx, res); err == nil {
+			// initiate next reading
+			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
+		} else {
+			proc.watcher.Free(res.Conn)
+		}
 	}
-
 }
 
 // process header fields
-func (proc *AIOHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) {
+func (proc *AIOHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) error {
 	buffer := ctx.buf.Bytes()
 	// traceback at most 3 extra bytes to locate CRLF-CRLF
 	s := len(buffer) - res.Size - 3
@@ -158,7 +160,7 @@ func (proc *AIOHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult
 		_, err := ctx.Header.parse(ctx.buf.Bytes())
 		if err != nil {
 			//	log.Println(err)
-			return
+			return err
 		}
 
 		// since header has parsed, remove header bytes now
@@ -172,21 +174,24 @@ func (proc *AIOHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult
 		ctx.state = stateBody
 
 		// continue to read body
-		proc.procBody(ctx, res)
+		return proc.procBody(ctx, res)
 	}
+
+	return nil
 }
 
 // process body
-func (proc *AIOHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult) {
+func (proc *AIOHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult) error {
 	// read body data
 	if ctx.buf.Len() < ctx.Header.ContentLength() {
-		return
+		return nil
 	}
 
 	// process request
-	ctx.Response.Reset()
-	proc.handler(ctx)
+	err := proc.handler(ctx)
 
+	// process request
+	ctx.Response.Reset()
 	if ctx.ResponseData != nil {
 		ctx.Response.SetContentLength(len(ctx.ResponseData))
 	}
@@ -206,4 +211,6 @@ func (proc *AIOHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult) 
 	// reset timeouts
 	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
 	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proc.bodyTimeout)
+
+	return err
 }
