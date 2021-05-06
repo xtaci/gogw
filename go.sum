@@ -49,6 +49,10 @@ github.com/xtaci/gaio v1.2.10-0.20210501070500-2784b9a34a3a h1:x25JKKVWhd9o/MP+s
 github.com/xtaci/gaio v1.2.10-0.20210501070500-2784b9a34a3a/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
 github.com/xtaci/gaio v1.2.10-0.20210501070612-99c634acbe7f h1:m8p4JvSwrqszihVGcDrPGZZO3OdT/SNGtsktpiNg+Ac=
 github.com/xtaci/gaio v1.2.10-0.20210501070612-99c634acbe7f/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
+github.com/xtaci/gaio v1.2.10-0.20210506020816-ce20a809ac16 h1:wahpLeR0uofq/Cif06ChgnEFUcu2GgfuAp3YaVSutwY=
+github.com/xtaci/gaio v1.2.10-0.20210506020816-ce20a809ac16/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
+github.com/xtaci/gaio v1.2.10-0.20210506021033-e9b1aefd9ea2 h1:VmdLHgcv2TzyufDMbejiLPZB9lz3A+cBQ2y6R6ebegc=
+github.com/xtaci/gaio v1.2.10-0.20210506021033-e9b1aefd9ea2/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
 golang.org/x/sys v0.0.0-20190228124157-a34e9553db1e h1:ZytStCyV048ZqDsWHiYDdoI2Vd4msMcrDECFxS+tL9c=
 golang.org/x/sys v0.0.0-20190228124157-a34e9553db1e/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
