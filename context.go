@@ -2,6 +2,7 @@ package aiohttp
 
 import (
 	"bytes"
+	"time"
 )
 
 type timeoutError struct{}
@@ -30,4 +31,8 @@ type AIOHttpContext struct {
 	Header       RequestHeader
 	Response     ResponseHeader
 	ResponseData []byte
+
+	// dead line for reading
+	headerDeadLine time.Time
+	bodyDeadLine   time.Time
 }

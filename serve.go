@@ -11,7 +11,7 @@ type Server struct {
 	// The service names are defined in RFC 6335 and assigned by IANA.
 	// See net.Dial for details of the address format.
 	addr    string
-	proc    *AIOHttpProcessor // I/O processor
+	Proc    *AIOHttpProcessor // I/O processor
 	watcher *gaio.Watcher
 }
 
@@ -21,7 +21,7 @@ func NewServer(addr string, bufSize int, handler RequestHandler) (*Server, error
 		return nil, err
 	}
 	proc := NewAIOHttpProcessor(watcher, handler)
-	server := &Server{addr: addr, proc: proc, watcher: watcher}
+	server := &Server{addr: addr, Proc: proc, watcher: watcher}
 	return server, nil
 }
 
@@ -45,7 +45,7 @@ func (srv *Server) ListenAndServe() error {
 	}
 
 	// start processor loop
-	srv.proc.StartProcessor()
+	srv.Proc.StartProcessor()
 
 	for {
 		conn, err := ln.Accept()
@@ -53,7 +53,7 @@ func (srv *Server) ListenAndServe() error {
 			return err
 		}
 
-		err = srv.proc.AddConn(conn)
+		err = srv.Proc.AddConn(conn)
 		if err != nil {
 			return err
 		}
