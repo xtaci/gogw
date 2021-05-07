@@ -19,6 +19,18 @@ const (
 	stateBody
 )
 
+const (
+	KB = 1024
+	MB = 1024 * KB
+)
+
+const (
+	defaultHeaderTimeout     = 5 * time.Second
+	defaultBodyTimeout       = 15 * time.Second
+	defaultMaximumHeaderSize = 2 * KB
+	defaultMaximumBodySize   = 1 * MB
+)
+
 type RequestHandler func(*AIOHttpContext) error
 type AIOHttpProcessor struct {
 	watcher *gaio.Watcher
@@ -40,10 +52,13 @@ func NewAIOHttpProcessor(watcher *gaio.Watcher, handler RequestHandler) *AIOHttp
 	proc.watcher = watcher
 	proc.die = make(chan struct{})
 	proc.handler = handler
-	proc.headerTimeout = 5 * time.Second
-	proc.bodyTimeout = 15 * time.Second
-	proc.maximumHeaderSize = 1024
-	proc.maximumBodySize = 1024 * 1024
+
+	// init with default vault
+	proc.headerTimeout = defaultHeaderTimeout
+	proc.bodyTimeout = defaultBodyTimeout
+	proc.maximumHeaderSize = defaultMaximumHeaderSize
+	proc.maximumBodySize = defaultMaximumBodySize
+
 	return proc
 }
 
