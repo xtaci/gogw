@@ -5,13 +5,14 @@ import (
 	"github.com/xtaci/gaio"
 )
 
+// Server defines gaio based http server
 type Server struct {
 	// addr optionally specifies the TCP address for the server to listen on,
 	// in the form "host:port". If empty, ":http" (port 80) is used.
 	// The service names are defined in RFC 6335 and assigned by IANA.
 	// See net.Dial for details of the address format.
 	addr    string
-	Proc    *AIOHttpProcessor // I/O processor
+	proc    *AIOHttpProcessor // I/O processor
 	watcher *gaio.Watcher
 }
 
@@ -32,7 +33,7 @@ func NewServer(addr string, bufSize int, handler RequestHandler) (*Server, error
 		return nil, err
 	}
 	proc := NewAIOHttpProcessor(watcher, handler)
-	server := &Server{addr: addr, Proc: proc, watcher: watcher}
+	server := &Server{addr: addr, proc: proc, watcher: watcher}
 	return server, nil
 }
 
@@ -59,7 +60,7 @@ func (srv *Server) ListenAndServe() error {
 	}
 
 	// start processor loop
-	srv.Proc.StartProcessor()
+	srv.proc.StartProcessor()
 
 	for {
 		conn, err := ln.Accept()
@@ -67,7 +68,7 @@ func (srv *Server) ListenAndServe() error {
 			return err
 		}
 
-		err = srv.Proc.AddConn(conn)
+		err = srv.proc.AddConn(conn)
 		if err != nil {
 			return err
 		}

@@ -83,8 +83,8 @@ func (proc *AIOHttpProcessor) StartProcessor() {
 			}
 
 			for _, res := range results {
+				ctx := res.Context.(*AIOHttpContext)
 				if res.Operation == gaio.OpRead {
-					ctx := res.Context.(*AIOHttpContext)
 					if res.Error == nil {
 						proc.processRequest(ctx, &res)
 					} else {
@@ -122,7 +122,7 @@ func (proc *AIOHttpProcessor) SetBodyMaximumSize(size int) {
 
 // process request
 func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
-	if ctx.state == stateHeader {
+	if ctx.protoState == stateHeader {
 		// check buffer size
 		if ctx.buf.Len()+res.Size > proc.maximumHeaderSize {
 			proc.watcher.Free(res.Conn)
@@ -139,7 +139,7 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 		} else {
 			proc.watcher.Free(res.Conn)
 		}
-	} else if ctx.state == stateBody {
+	} else if ctx.protoState == stateBody {
 		// body size limit
 		if ctx.buf.Len() > proc.maximumBodySize {
 			proc.watcher.Free(res.Conn)
@@ -151,7 +151,6 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 
 		// try process body
 		if err := proc.procBody(ctx, res); err == nil {
-			// initiate next reading
 			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		} else {
 			proc.watcher.Free(res.Conn)
@@ -186,7 +185,7 @@ func (proc *AIOHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult
 		ctx.URI.Parse(nil, ctx.Header.RequestURI())
 
 		// start to read body
-		ctx.state = stateBody
+		ctx.protoState = stateBody
 
 		// continue to read body
 		return proc.procBody(ctx, res)
@@ -215,7 +214,7 @@ func (proc *AIOHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult) 
 	proc.watcher.Write(ctx, res.Conn, append(ctx.Response.Header(), ctx.ResponseData...))
 
 	// set state back to header
-	ctx.state = stateHeader
+	ctx.protoState = stateHeader
 
 	// discard buffer
 	if ctx.Header.ContentLength() > 0 {

@@ -24,15 +24,17 @@ var ErrTimeout = &timeoutError{}
 
 //  AIO Http context
 type AIOHttpContext struct {
-	state        int
-	buf          *bytes.Buffer
-	URI          URI
-	headerSize   int
-	Header       RequestHeader
-	Response     ResponseHeader
-	ResponseData []byte
+	protoState int // the state for reading
 
-	// dead line for reading
+	buf *bytes.Buffer // the buffer to handle all incoming requests
+	URI URI           // current incoming request's URL
+
+	headerSize   int            // current  incoming requet's header size
+	Header       RequestHeader  // current incoming header content
+	Response     ResponseHeader // current outgoing response header
+	ResponseData []byte         // current outgoing response data
+
+	// deadlines for reading, adjusted per request
 	headerDeadLine time.Time
 	bodyDeadLine   time.Time
 }
