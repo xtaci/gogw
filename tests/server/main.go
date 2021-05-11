@@ -14,7 +14,15 @@ var (
 )
 
 func handler(ctx *aiohttp.AIOHttpContext) error {
-	switch string(ctx.URI.Path()) {
+	// parse URI
+	var URI aiohttp.URI // current incoming request's URL
+	err := URI.Parse(nil, ctx.Header.RequestURI())
+	if err != nil {
+		return err
+	}
+
+	// http route
+	switch string(URI.Path()) {
 	case "/":
 		ctx.Response.SetStatusCode(200)
 		ctx.ResponseData = []byte("AIOHTTP")

@@ -180,10 +180,6 @@ func (proc *AIOHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult
 		// since header has parsed, remove header bytes now
 		io.CopyN(io.Discard, ctx.buf, int64(ctx.headerSize))
 
-		// set URI
-		ctx.URI.Reset()
-		ctx.URI.Parse(nil, ctx.Header.RequestURI())
-
 		// start to read body
 		ctx.protoState = stateBody
 

@@ -27,7 +27,6 @@ type AIOHttpContext struct {
 	protoState int // the state for reading
 
 	buf *bytes.Buffer // the buffer to handle all incoming requests
-	URI URI           // current incoming request's URL
 
 	headerSize   int            // current  incoming requet's header size
 	Header       RequestHeader  // current incoming header content
