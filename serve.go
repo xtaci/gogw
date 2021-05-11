@@ -15,7 +15,18 @@ type Server struct {
 	watcher *gaio.Watcher
 }
 
+// NewServer creates a gaio basd http server
+// bufSize specify the swap buffer size for gaio.Watcher
+// handler specify the http request handler
 func NewServer(addr string, bufSize int, handler RequestHandler) (*Server, error) {
+	if handler == nil {
+		return nil, ErrRequestHandlerEmpty
+	}
+
+	if bufSize <= 0 {
+		return nil, ErrWatcherBufSize
+	}
+
 	watcher, err := gaio.NewWatcherSize(bufSize)
 	if err != nil {
 		return nil, err
@@ -25,14 +36,17 @@ func NewServer(addr string, bufSize int, handler RequestHandler) (*Server, error
 	return server, nil
 }
 
+// SetLoopAffinity binds the loop for reading/writing to a specific CPU
 func (srv *Server) SetLoopAffinity(cpuid int) error {
 	return srv.watcher.SetLoopAffinity(cpuid)
 }
 
+// SetPoolerAffinity binds the pooler, like kqueue/epoll to wait for events to a specific CPu
 func (srv *Server) SetPoolerAffinity(cpuid int) error {
 	return srv.watcher.SetPollerAffinity(cpuid)
 }
 
+// ListenAndServe starts listen and serve http requests
 func (srv *Server) ListenAndServe() error {
 	addr := srv.addr
 	if addr == "" {
