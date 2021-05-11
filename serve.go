@@ -32,7 +32,7 @@ func NewServer(addr string, bufSize int, handler IRequestHandler) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
-	proc := NewAsyncHttpProcessor(watcher, handler)
+	proc := NewAsyncHttpProcessor(watcher, handler, nil)
 	server := &Server{addr: addr, proc: proc, watcher: watcher}
 	return server, nil
 }

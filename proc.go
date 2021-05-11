@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	HeaderEndFlag = []byte{0xD, 0xA, 0xD, 0xA}
+	HeaderEndFlag = []byte("\r\n\r\n")
 )
 
 const (
@@ -34,11 +34,15 @@ const (
 // IRequestHandler interface is the function prototype for request handler
 type IRequestHandler func(*AIOHttpContext) error
 
+// IRequestLimiter interface defines the function prototype for limiting request per second
+type IRequestLimiter func(*AIOHttpContext) error
+
 // AsyncHttpProcessor is the core async http processor
 type AsyncHttpProcessor struct {
 	watcher *gaio.Watcher
 	die     chan struct{}
 	handler IRequestHandler
+	limiter IRequestLimiter
 
 	// timeouts
 	headerTimeout time.Duration
@@ -50,11 +54,12 @@ type AsyncHttpProcessor struct {
 }
 
 // Create processor context
-func NewAsyncHttpProcessor(watcher *gaio.Watcher, handler IRequestHandler) *AsyncHttpProcessor {
+func NewAsyncHttpProcessor(watcher *gaio.Watcher, handler IRequestHandler, limiter IRequestLimiter) *AsyncHttpProcessor {
 	proc := new(AsyncHttpProcessor)
 	proc.watcher = watcher
 	proc.die = make(chan struct{})
 	proc.handler = handler
+	proc.limiter = limiter
 
 	// init with default vault
 	proc.headerTimeout = defaultHeaderTimeout
