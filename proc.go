@@ -31,11 +31,14 @@ const (
 	defaultMaximumBodySize   = 1 * MB
 )
 
-type RequestHandler func(*AIOHttpContext) error
-type AIOHttpProcessor struct {
+// IRequestHandler interface is the function prototype for request handler
+type IRequestHandler func(*AIOHttpContext) error
+
+// AsyncHttpProcessor is the core async http processor
+type AsyncHttpProcessor struct {
 	watcher *gaio.Watcher
 	die     chan struct{}
-	handler RequestHandler
+	handler IRequestHandler
 
 	// timeouts
 	headerTimeout time.Duration
@@ -47,8 +50,8 @@ type AIOHttpProcessor struct {
 }
 
 // Create processor context
-func NewAIOHttpProcessor(watcher *gaio.Watcher, handler RequestHandler) *AIOHttpProcessor {
-	proc := new(AIOHttpProcessor)
+func NewAsyncHttpProcessor(watcher *gaio.Watcher, handler IRequestHandler) *AsyncHttpProcessor {
+	proc := new(AsyncHttpProcessor)
 	proc.watcher = watcher
 	proc.die = make(chan struct{})
 	proc.handler = handler
@@ -63,7 +66,7 @@ func NewAIOHttpProcessor(watcher *gaio.Watcher, handler RequestHandler) *AIOHttp
 }
 
 // Add connection to this processor
-func (proc *AIOHttpProcessor) AddConn(conn net.Conn) error {
+func (proc *AsyncHttpProcessor) AddConn(conn net.Conn) error {
 	ctx := new(AIOHttpContext)
 	ctx.buf = new(bytes.Buffer)
 	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
@@ -72,7 +75,7 @@ func (proc *AIOHttpProcessor) AddConn(conn net.Conn) error {
 }
 
 // Processor loop
-func (proc *AIOHttpProcessor) StartProcessor() {
+func (proc *AsyncHttpProcessor) StartProcessor() {
 	go func() {
 		for {
 			// loop wait for any IO events
@@ -101,27 +104,27 @@ func (proc *AIOHttpProcessor) StartProcessor() {
 }
 
 // set header timeout
-func (proc *AIOHttpProcessor) SetHeaderTimeout(d time.Duration) {
+func (proc *AsyncHttpProcessor) SetHeaderTimeout(d time.Duration) {
 	proc.headerTimeout = d
 }
 
 // set body timeout
-func (proc *AIOHttpProcessor) SetBodyTimeout(d time.Duration) {
+func (proc *AsyncHttpProcessor) SetBodyTimeout(d time.Duration) {
 	proc.bodyTimeout = d
 }
 
 // set header size limit
-func (proc *AIOHttpProcessor) SetHeaderMaximumSize(size int) {
+func (proc *AsyncHttpProcessor) SetHeaderMaximumSize(size int) {
 	proc.maximumHeaderSize = size
 }
 
 // set body size limit
-func (proc *AIOHttpProcessor) SetBodyMaximumSize(size int) {
+func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 	proc.maximumBodySize = size
 }
 
 // process request
-func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
+func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
 	if ctx.protoState == stateHeader {
 		// check buffer size
 		if ctx.buf.Len()+res.Size > proc.maximumHeaderSize {
@@ -159,7 +162,7 @@ func (proc *AIOHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpRe
 }
 
 // process header fields
-func (proc *AIOHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) error {
+func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) error {
 	buffer := ctx.buf.Bytes()
 	// traceback at most 3 extra bytes to locate CRLF-CRLF
 	s := len(buffer) - res.Size - 3
@@ -191,7 +194,7 @@ func (proc *AIOHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult
 }
 
 // process body
-func (proc *AIOHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult) error {
+func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult) error {
 	// read body data
 	if ctx.buf.Len() < ctx.Header.ContentLength() {
 		return nil

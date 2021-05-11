@@ -12,14 +12,14 @@ type Server struct {
 	// The service names are defined in RFC 6335 and assigned by IANA.
 	// See net.Dial for details of the address format.
 	addr    string
-	proc    *AIOHttpProcessor // I/O processor
+	proc    *AsyncHttpProcessor // I/O processor
 	watcher *gaio.Watcher
 }
 
 // NewServer creates a gaio basd http server
 // bufSize specify the swap buffer size for gaio.Watcher
 // handler specify the http request handler
-func NewServer(addr string, bufSize int, handler RequestHandler) (*Server, error) {
+func NewServer(addr string, bufSize int, handler IRequestHandler) (*Server, error) {
 	if handler == nil {
 		return nil, ErrRequestHandlerEmpty
 	}
@@ -32,7 +32,7 @@ func NewServer(addr string, bufSize int, handler RequestHandler) (*Server, error
 	if err != nil {
 		return nil, err
 	}
-	proc := NewAIOHttpProcessor(watcher, handler)
+	proc := NewAsyncHttpProcessor(watcher, handler)
 	server := &Server{addr: addr, proc: proc, watcher: watcher}
 	return server, nil
 }
