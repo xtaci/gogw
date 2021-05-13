@@ -2,6 +2,7 @@ package aiohttp
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -11,57 +12,76 @@ import (
 )
 
 type regExpRule struct {
-	regexp regexp.Regexp
-	limits int
+	regexp *regexp.Regexp
+	limits uint64
 }
 
 type RegexLimiter []regExpRule
 
-func (reg *RegexLimiter) Test(*AIOHttpContext) bool {
+func (reg RegexLimiter) Test(*AIOHttpContext) bool {
 	return false
 }
 
 // load a regex based limiter from config
 // file format:
-// regex matching: request per second
-func LoadRegexLimiter(path string) (*IRequestLimiter, error) {
+// 1 regex matching
+// 2 request per second
+// 3 regex matching
+// 4 request per second
+func LoadRegexLimiter(path string) (RegexLimiter, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-
-	regexLimiter := new(RegexLimiter)
-
-	// read rules line by line
 	fileReader := bufio.NewReader(file)
+	return parseRegexLimiter(fileReader)
+}
+
+func parseRegexLimiter(reader *bufio.Reader) (RegexLimiter, error) {
+	var regexLimiter RegexLimiter
+
 	var lineNum int
+
+	// start by reading regex line
+	readRegex := true
+
+	var rexp *regexp.Regexp
+	var limit uint64
+
 	for {
-		line, err := fileReader.ReadString("\n")
-		if err != nil {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
 			break
 		}
 
-		// split by ":"
-		parts := strings.Split(line, ":")
-		if len(parts) != 2 {
-			return nil, errors.Errorf("regexLimiter format error:line %d data:%v", lineNum, line)
-		}
-
-		// parse pattern matching
-		regexp, err := regexp.Compile(parts[0])
 		if err != nil {
-			return nil, errors.Errorf("regexLimiter cannot parse regexp:line %d, data:%v, error: %v", lineNum, parts[0], err)
+			return nil, err
 		}
 
-		// parse limit
-		limit, err := strconv.ParseUint(parts[1], 0, 64)
-		if err != nil {
-			return nil, errors.Errorf("regexLimiter cannot parse limit number:line %d, data:%v, error: %v", lineNum, parts[1], err)
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
 
-		// add rules
-		regexLimiter = append(regexLimiter, regExpRule{regexp, limit})
+		if readRegex {
+			// parse pattern matching
+			rexp, err = regexp.Compile(line)
+			if err != nil {
+				return nil, errors.Errorf("regexLimiter cannot parse regexp:line %d, data:%v, error: %v", lineNum, line, err)
+			}
+			readRegex = false
+		} else {
+			// parse limit
+			limit, err = strconv.ParseUint(line, 0, 64)
+			if err != nil {
+				return nil, errors.Errorf("regexLimiter cannot parse limit number:line %d, data:%v, error: %v", lineNum, line, err)
+			}
+			readRegex = true
+
+			// add rules
+			regexLimiter = append(regexLimiter, regExpRule{rexp, limit})
+		}
 	}
 
 	return regexLimiter, nil
