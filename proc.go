@@ -35,7 +35,9 @@ const (
 type IRequestHandler func(*AIOHttpContext) error
 
 // IRequestLimiter interface defines the function prototype for limiting request per second
-type IRequestLimiter func(*AIOHttpContext) error
+type IRequestLimiter interface {
+	Test(*AIOHttpContext) bool
+}
 
 // AsyncHttpProcessor is the core async http processor
 type AsyncHttpProcessor struct {
