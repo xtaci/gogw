@@ -18,8 +18,19 @@ type regExpRule struct {
 
 type RegexLimiter []regExpRule
 
-func (reg RegexLimiter) Test(*AIOHttpContext) bool {
-	return false
+func (reg RegexLimiter) Test(ctx *AIOHttpContext) bool {
+	var uri URI // current incoming request's URL
+	err := uri.Parse(nil, ctx.Header.RequestURI())
+	if err != nil {
+		return false
+	}
+
+	for k := range reg {
+		if reg[k].regexp.Match(uri.Path()) {
+			return false
+		}
+	}
+	return true
 }
 
 // load a regex based limiter from config
