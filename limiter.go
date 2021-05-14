@@ -5,10 +5,8 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -18,49 +16,31 @@ type regExpRule struct {
 	regexp *regexp.Regexp
 	limits int32
 	tokens int32
-}
 
-// RegexLimiter wraps regexLimiter for gc
-type regexLimiter struct {
-	rules    []regExpRule
-	chClosed chan struct{}
-}
-
-// periodically add tokens to rules
-func (reg *regexLimiter) tokenApprover() {
-	ticker := time.NewTicker(time.Second)
-	for {
-		select {
-		case <-ticker.C:
-			for k := range reg.rules {
-				atomic.StoreInt32(&reg.rules[k].tokens, reg.rules[k].limits)
-			}
-		case <-reg.chClosed:
-			return
-		}
-	}
-}
-
-func (reg *regexLimiter) Test(uri *URI) bool {
-	for k := range reg.rules {
-		if reg.rules[k].regexp.Match(uri.Path()) {
-			if atomic.AddInt32(&reg.rules[k].tokens, -1) < 0 {
-				return false
-			} else {
-				return true
-			}
-		}
-	}
-	return true
-}
-
-func (reg *regexLimiter) Close() {
-	close(reg.chClosed)
+	lastTest time.Time // last test time
 }
 
 // RegexLimiter wraps regexLimiter for gc
 type RegexLimiter struct {
-	*regexLimiter
+	rules []regExpRule
+}
+
+func (reg *RegexLimiter) Test(uri *URI) bool {
+	for k := range reg.rules {
+		if reg.rules[k].regexp.Match(uri.Path()) {
+			// token re-approve
+			if time.Since(reg.rules[k].lastTest) > time.Second {
+				reg.rules[k].tokens = reg.rules[k].limits
+			}
+
+			if reg.rules[k].tokens > 0 {
+				reg.rules[k].tokens--
+				return true
+			}
+			return false
+		}
+	}
+	return true
 }
 
 // load a regex based limiter from config
@@ -80,8 +60,7 @@ func LoadRegexLimiter(path string) (*RegexLimiter, error) {
 }
 
 func parseRegexLimiter(reader *bufio.Reader) (*RegexLimiter, error) {
-	regexLimiter := new(regexLimiter)
-	regexLimiter.chClosed = make(chan struct{})
+	regexLimiter := new(RegexLimiter)
 
 	var lineNum int
 
@@ -122,17 +101,9 @@ func parseRegexLimiter(reader *bufio.Reader) (*RegexLimiter, error) {
 			readRegex = true
 
 			// add rules
-			regexLimiter.rules = append(regexLimiter.rules, regExpRule{rexp, int32(limit), int32(limit)})
+			regexLimiter.rules = append(regexLimiter.rules, regExpRule{rexp, int32(limit), int32(limit), time.Now()})
 		}
 	}
 
-	wrapper := &RegexLimiter{regexLimiter}
-	runtime.SetFinalizer(wrapper, func(wrapper *RegexLimiter) {
-		wrapper.Close()
-	})
-
-	// spin up the token control goroutine
-	go regexLimiter.tokenApprover()
-
-	return &RegexLimiter{regexLimiter}, nil
+	return regexLimiter, nil
 }

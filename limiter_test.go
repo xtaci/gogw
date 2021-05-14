@@ -3,7 +3,6 @@ package aiohttp
 import (
 	"bufio"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,9 +33,10 @@ func TestLimiterParser(t *testing.T) {
 	assert.Nil(t, err)
 
 	assert.True(t, limiter.Test(&uri))
-	assert.Equal(t, int32(9), atomic.LoadInt32(&limiter.rules[0].tokens))
+	assert.Equal(t, int32(9), limiter.rules[0].tokens)
 
 	// token refresh
 	<-time.After(time.Second)
-	assert.Equal(t, int32(10), atomic.LoadInt32(&limiter.rules[0].tokens))
+	assert.True(t, limiter.Test(&uri))
+	assert.Equal(t, int32(9), limiter.rules[0].tokens)
 }
