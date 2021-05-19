@@ -36,7 +36,7 @@ type IRequestHandler func(*AIOHttpContext) error
 
 // IRequestLimiter interface defines the function prototype for limiting request per second
 type IRequestLimiter interface {
-	Test(*AIOHttpContext) bool
+	Test(uri *URI) bool
 }
 
 // AsyncHttpProcessor is the core async http processor
@@ -76,6 +76,7 @@ func NewAsyncHttpProcessor(watcher *gaio.Watcher, handler IRequestHandler, limit
 func (proc *AsyncHttpProcessor) AddConn(conn net.Conn) error {
 	ctx := new(AIOHttpContext)
 	ctx.buf = new(bytes.Buffer)
+	ctx.limiter = proc.limiter // a shallow copy of limiter
 	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
 	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proc.bodyTimeout)
 	return proc.watcher.ReadTimeout(ctx, conn, nil, ctx.headerDeadLine)
@@ -185,6 +186,19 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 		if err != nil {
 			//	log.Println(err)
 			return err
+		}
+
+		// try to limit the RPS
+		if ctx.limiter != nil {
+			var uri URI
+			err = uri.Parse(nil, ctx.Header.RequestURI())
+			if err != nil {
+				return err
+			}
+
+			if !ctx.limiter.Test(&uri) {
+				return ErrRequestLimit
+			}
 		}
 
 		// since header has parsed, remove header bytes now

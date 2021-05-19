@@ -36,4 +36,7 @@ type AIOHttpContext struct {
 	// deadlines for reading, adjusted per request
 	headerDeadLine time.Time
 	bodyDeadLine   time.Time
+
+	// limiter for requests
+	limiter IRequestLimiter
 }
