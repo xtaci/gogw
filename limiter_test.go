@@ -21,7 +21,7 @@ func TestLimiterParser(t *testing.T) {
 
 	reader := bufio.NewReader(strings.NewReader(testString))
 
-	limiter, err := parseRegexLimiter(reader)
+	limiter, err := ParseRegexLimiter(reader)
 	assert.Nil(t, err)
 
 	for k := range limiter.rules {

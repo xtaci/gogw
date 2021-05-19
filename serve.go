@@ -19,7 +19,7 @@ type Server struct {
 // NewServer creates a gaio basd http server
 // bufSize specify the swap buffer size for gaio.Watcher
 // handler specify the http request handler
-func NewServer(addr string, bufSize int, handler IRequestHandler) (*Server, error) {
+func NewServer(addr string, bufSize int, handler IRequestHandler, limiter IRequestLimiter) (*Server, error) {
 	if handler == nil {
 		return nil, ErrRequestHandlerEmpty
 	}
@@ -32,7 +32,7 @@ func NewServer(addr string, bufSize int, handler IRequestHandler) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
-	proc := NewAsyncHttpProcessor(watcher, handler, nil)
+	proc := NewAsyncHttpProcessor(watcher, handler, limiter)
 	server := &Server{addr: addr, proc: proc, watcher: watcher}
 	return server, nil
 }

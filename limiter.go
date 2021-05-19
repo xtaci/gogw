@@ -31,6 +31,7 @@ func (reg *RegexLimiter) Test(uri *URI) bool {
 			// token re-approve
 			if time.Since(reg.rules[k].lastTest) > time.Second {
 				reg.rules[k].tokens = reg.rules[k].limits
+				reg.rules[k].lastTest = time.Now()
 			}
 
 			if reg.rules[k].tokens > 0 {
@@ -56,10 +57,10 @@ func LoadRegexLimiter(path string) (*RegexLimiter, error) {
 	}
 	defer file.Close()
 	fileReader := bufio.NewReader(file)
-	return parseRegexLimiter(fileReader)
+	return ParseRegexLimiter(fileReader)
 }
 
-func parseRegexLimiter(reader *bufio.Reader) (*RegexLimiter, error) {
+func ParseRegexLimiter(reader *bufio.Reader) (*RegexLimiter, error) {
 	regexLimiter := new(RegexLimiter)
 
 	var lineNum int

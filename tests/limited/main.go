@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"strings"
 
 	"github.com/xtaci/aiohttp"
 )
@@ -41,8 +43,20 @@ func main() {
 		log.Println(http.ListenAndServe(":6060", nil))
 	}()
 
+	testString := `
+/
+10
+`
+
+	reader := bufio.NewReader(strings.NewReader(testString))
+
+	limiter, err := aiohttp.ParseRegexLimiter(reader)
+	if err != nil {
+		panic(err)
+	}
+
 	for i := 0; i < numServer; i++ {
-		server, err := aiohttp.NewServer(":8080", 256*1024*1024, handler, nil)
+		server, err := aiohttp.NewServer(":8080", 256*1024*1024, handler, limiter)
 		if err != nil {
 			panic(err)
 		}
