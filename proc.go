@@ -171,7 +171,6 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.Op
 
 // process header fields
 func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) error {
-
 	// index CRLF-CRLF
 	var headerOK bool
 	for i := 0; i < res.Size; i++ {
@@ -189,7 +188,6 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 	}
 
 	if headerOK {
-		ctx.Header.Reset()
 		var err error
 		ctx.headerSize, err = ctx.Header.parse(ctx.buf.Bytes())
 		if err != nil {
@@ -216,6 +214,10 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 		// start to read body
 		ctx.protoState = stateBody
 
+		// prepare response struct
+		ctx.Response.Reset()
+
+		// toggle to process header
 		return proc.procBody(ctx, res)
 	}
 	return nil
@@ -229,10 +231,11 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult
 	}
 
 	// process request
-	err := proc.handler(ctx)
+	if err := proc.handler(ctx); err != nil {
+		return err
+	}
 
 	// process request
-	ctx.Response.Reset()
 	if ctx.ResponseData != nil {
 		ctx.Response.SetContentLength(len(ctx.ResponseData))
 	}
@@ -253,5 +256,9 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult
 	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
 	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proc.bodyTimeout)
 
-	return err
+	// prepare header struct
+	ctx.Header.Reset()
+
+	// toggle to process header
+	return proc.procHeader(ctx, res)
 }
