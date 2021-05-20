@@ -171,18 +171,27 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.Op
 
 // process header fields
 func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) error {
-	buffer := ctx.buf.Bytes()
-	// traceback at most 3 extra bytes to locate CRLF-CRLF
-	s := len(buffer) - res.Size - 3
-	if s < 0 {
-		s = 0
+
+	// index CRLF-CRLF
+	var headerOK bool
+	for i := 0; i < res.Size; i++ {
+		if res.Buffer[i] == HeaderEndFlag[ctx.expectedChar] {
+			ctx.expectedChar++
+			if ctx.expectedChar == uint8(len(HeaderEndFlag)) {
+				// reset expected end
+				ctx.expectedChar = 0
+				headerOK = true
+				break
+			}
+		} else {
+			ctx.expectedChar = 0
+		}
 	}
 
-	// O(n) search of CRLF-CRLF
-	if i := bytes.Index(buffer[s:], HeaderEndFlag); i != -1 {
-		ctx.headerSize = s + i + len(HeaderEndFlag)
+	if headerOK {
 		ctx.Header.Reset()
-		_, err := ctx.Header.parse(ctx.buf.Bytes())
+		var err error
+		ctx.headerSize, err = ctx.Header.parse(ctx.buf.Bytes())
 		if err != nil {
 			//	log.Println(err)
 			return err
@@ -201,16 +210,14 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 			}
 		}
 
-		// since header has parsed, remove header bytes now
+		// since header has parsed, discard header bytes now
 		io.CopyN(io.Discard, ctx.buf, int64(ctx.headerSize))
 
 		// start to read body
 		ctx.protoState = stateBody
 
-		// continue to read body
 		return proc.procBody(ctx, res)
 	}
-
 	return nil
 }
 
