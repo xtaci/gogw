@@ -171,14 +171,13 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.Op
 
 // process header fields
 func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) error {
-	// index CRLF-CRLF
+	buffer := ctx.buf.Bytes()
+
 	var headerOK bool
-	for i := 0; i < res.Size; i++ {
-		if res.Buffer[i] == HeaderEndFlag[ctx.expectedChar] {
+	for i := ctx.nextCompare; i < len(buffer); i++ {
+		if buffer[i] == HeaderEndFlag[ctx.expectedChar] {
 			ctx.expectedChar++
 			if ctx.expectedChar == uint8(len(HeaderEndFlag)) {
-				// reset expected end
-				ctx.expectedChar = 0
 				headerOK = true
 				break
 			}
@@ -186,10 +185,11 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 			ctx.expectedChar = 0
 		}
 	}
+	ctx.nextCompare = len(buffer)
 
 	if headerOK {
 		var err error
-		ctx.headerSize, err = ctx.Header.parse(ctx.buf.Bytes())
+		ctx.headerSize, err = ctx.Header.parse(buffer)
 		if err != nil {
 			//	log.Println(err)
 			return err
@@ -208,7 +208,7 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 			}
 		}
 
-		// since header has parsed, discard header bytes now
+		// since header has parsed, remove header bytes now
 		io.CopyN(io.Discard, ctx.buf, int64(ctx.headerSize))
 
 		// start to read body
@@ -256,8 +256,10 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult
 	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
 	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proc.bodyTimeout)
 
-	// prepare header struct
+	// prepare header related data
 	ctx.Header.Reset()
+	ctx.nextCompare = 0
+	ctx.expectedChar = 0
 
 	// toggle to process header
 	return proc.procHeader(ctx, res)

@@ -24,8 +24,9 @@ var ErrTimeout = &timeoutError{}
 
 //  AIO Http context
 type AIOHttpContext struct {
-	protoState   int   // the state for reading
-	expectedChar uint8 // fast indexing for end of header
+	protoState     int   // the state for reading
+	expectedChar   uint8 // fast indexing for end of header
+	nextCompare int
 
 	buf *bytes.Buffer // the buffer to handle all incoming requests
 
