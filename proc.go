@@ -1,8 +1,6 @@
 package aiohttp
 
 import (
-	"bytes"
-	"io"
 	"log"
 	"net"
 	"time"
@@ -75,7 +73,6 @@ func NewAsyncHttpProcessor(watcher *gaio.Watcher, handler IRequestHandler, limit
 // Add connection to this processor
 func (proc *AsyncHttpProcessor) AddConn(conn net.Conn) error {
 	ctx := new(AIOHttpContext)
-	ctx.buf = new(bytes.Buffer)
 	ctx.limiter = proc.limiter // a shallow copy of limiter
 	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
 	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proc.bodyTimeout)
@@ -134,14 +131,8 @@ func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 // process request
 func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
 	if ctx.protoState == stateHeader {
-		// check buffer size
-		if ctx.buf.Len()+res.Size > proc.maximumHeaderSize {
-			proc.watcher.Free(res.Conn)
-			return
-		}
-
 		// read into buffer
-		ctx.buf.Write(res.Buffer[:res.Size])
+		ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
 		// try process header
 		if err := proc.procHeader(ctx, res); err == nil {
@@ -151,14 +142,8 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.Op
 			proc.watcher.Free(res.Conn)
 		}
 	} else if ctx.protoState == stateBody {
-		// body size limit
-		if ctx.buf.Len() > proc.maximumBodySize {
-			proc.watcher.Free(res.Conn)
-			return
-		}
-
 		// read into buffer
-		ctx.buf.Write(res.Buffer[:res.Size])
+		ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
 		// try process body
 		if err := proc.procBody(ctx, res); err == nil {
@@ -171,11 +156,9 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.Op
 
 // process header fields
 func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) error {
-	buffer := ctx.buf.Bytes()
-
 	var headerOK bool
-	for i := ctx.nextCompare; i < len(buffer); i++ {
-		if buffer[i] == HeaderEndFlag[ctx.expectedChar] {
+	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
+		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
 			ctx.expectedChar++
 			if ctx.expectedChar == uint8(len(HeaderEndFlag)) {
 				headerOK = true
@@ -185,11 +168,11 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 			ctx.expectedChar = 0
 		}
 	}
-	ctx.nextCompare = len(buffer)
+	ctx.nextCompare = len(ctx.buffer)
 
 	if headerOK {
 		var err error
-		ctx.headerSize, err = ctx.Header.parse(buffer)
+		ctx.headerSize, err = ctx.Header.parse(ctx.buffer)
 		if err != nil {
 			//	log.Println(err)
 			return err
@@ -208,8 +191,14 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 			}
 		}
 
+		// body size limit
+		if ctx.Header.ContentLength() > proc.maximumBodySize {
+			proc.watcher.Free(res.Conn)
+			return ErrRequestBodySize
+		}
+
 		// since header has parsed, remove header bytes now
-		io.CopyN(io.Discard, ctx.buf, int64(ctx.headerSize))
+		ctx.buffer = ctx.buffer[ctx.headerSize:]
 
 		// start to read body
 		ctx.protoState = stateBody
@@ -220,13 +209,19 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 		// toggle to process header
 		return proc.procBody(ctx, res)
 	}
+
+	// restrict header size
+	if len(ctx.buffer) > proc.maximumHeaderSize {
+		proc.watcher.Free(res.Conn)
+		return ErrRequestHeaderSize
+	}
 	return nil
 }
 
 // process body
 func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult) error {
 	// read body data
-	if ctx.buf.Len() < ctx.Header.ContentLength() {
+	if len(ctx.buffer) < ctx.Header.ContentLength() {
 		return nil
 	}
 
@@ -248,7 +243,7 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult
 
 	// discard buffer
 	if ctx.Header.ContentLength() > 0 {
-		io.CopyN(io.Discard, ctx.buf, int64(ctx.Header.ContentLength()))
+		ctx.buffer = ctx.buffer[ctx.Header.ContentLength():]
 	}
 
 	// a complete request has done

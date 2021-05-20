@@ -1,7 +1,6 @@
 package aiohttp
 
 import (
-	"bytes"
 	"time"
 )
 
@@ -24,11 +23,11 @@ var ErrTimeout = &timeoutError{}
 
 //  AIO Http context
 type AIOHttpContext struct {
-	protoState     int   // the state for reading
-	expectedChar   uint8 // fast indexing for end of header
-	nextCompare int
+	protoState   int   // the state for reading
+	expectedChar uint8 // fast indexing for end of header
+	nextCompare  int
 
-	buf *bytes.Buffer // the buffer to handle all incoming requests
+	buffer []byte // input data buffer
 
 	headerSize   int            // current  incoming requet's header size
 	Header       RequestHeader  // current incoming header content
