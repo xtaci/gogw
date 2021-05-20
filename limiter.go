@@ -25,6 +25,7 @@ type RegexLimiter struct {
 	rules []regExpRule
 }
 
+// Test a uri for request limit
 func (reg *RegexLimiter) Test(uri *URI) bool {
 	for k := range reg.rules {
 		if reg.rules[k].regexp.Match(uri.Path()) {
@@ -46,10 +47,11 @@ func (reg *RegexLimiter) Test(uri *URI) bool {
 
 // load a regex based limiter from config
 // file format:
-// 1 regex matching
-// 2 request per second
-// 3 regex matching
-// 4 request per second
+// line 1: regex matching
+// line 2: request per second
+// ...
+// line m regex matching
+// line n request per second
 func LoadRegexLimiter(path string) (*RegexLimiter, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -60,7 +62,8 @@ func LoadRegexLimiter(path string) (*RegexLimiter, error) {
 	return ParseRegexLimiter(fileReader)
 }
 
-func ParseRegexLimiter(reader *bufio.Reader) (*RegexLimiter, error) {
+// Parse rule set from a reader
+func ParseRegexLimiter(reader io.Reader) (*RegexLimiter, error) {
 	regexLimiter := new(RegexLimiter)
 
 	var lineNum int
@@ -71,8 +74,11 @@ func ParseRegexLimiter(reader *bufio.Reader) (*RegexLimiter, error) {
 	var rexp *regexp.Regexp
 	var limit int64
 
+	bufferedReader := bufio.NewReader(reader)
+
+	// parse rules line by line
 	for {
-		line, err := reader.ReadString('\n')
+		line, err := bufferedReader.ReadString('\n')
 		if err == io.EOF {
 			break
 		}

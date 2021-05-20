@@ -1,7 +1,6 @@
 package aiohttp
 
 import (
-	"bufio"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +18,7 @@ func TestLimiterParser(t *testing.T) {
 100
 `
 
-	reader := bufio.NewReader(strings.NewReader(testString))
+	reader := strings.NewReader(testString)
 
 	limiter, err := ParseRegexLimiter(reader)
 	assert.Nil(t, err)
