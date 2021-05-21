@@ -135,7 +135,7 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.Op
 		ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
 		// try process header
-		if err := proc.procHeader(ctx, res); err == nil {
+		if err := proc.procHeader(ctx, res.Conn); err == nil {
 			// initiate next reading
 			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 		} else {
@@ -146,7 +146,7 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.Op
 		ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
 		// try process body
-		if err := proc.procBody(ctx, res); err == nil {
+		if err := proc.procBody(ctx, res.Conn); err == nil {
 			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		} else {
 			proc.watcher.Free(res.Conn)
@@ -155,7 +155,7 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.Op
 }
 
 // process header fields
-func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResult) error {
+func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, conn net.Conn) error {
 	var headerOK bool
 	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
 		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
@@ -193,7 +193,7 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 
 		// body size limit
 		if ctx.Header.ContentLength() > proc.maximumBodySize {
-			proc.watcher.Free(res.Conn)
+			proc.watcher.Free(conn)
 			return ErrRequestBodySize
 		}
 
@@ -207,19 +207,19 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, res *gaio.OpResu
 		ctx.Response.Reset()
 
 		// toggle to process header
-		return proc.procBody(ctx, res)
+		return proc.procBody(ctx, conn)
 	}
 
 	// restrict header size
 	if len(ctx.buffer) > proc.maximumHeaderSize {
-		proc.watcher.Free(res.Conn)
+		proc.watcher.Free(conn)
 		return ErrRequestHeaderSize
 	}
 	return nil
 }
 
 // process body
-func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult) error {
+func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, conn net.Conn) error {
 	// read body data
 	if len(ctx.buffer) < ctx.Header.ContentLength() {
 		return nil
@@ -236,7 +236,7 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult
 	}
 	ctx.Response.Set("Connection", "Keep-Alive")
 
-	proc.watcher.Write(ctx, res.Conn, append(ctx.Response.Header(), ctx.ResponseData...))
+	proc.watcher.Write(ctx, conn, append(ctx.Response.Header(), ctx.ResponseData...))
 
 	// set state back to header
 	ctx.protoState = stateHeader
@@ -257,5 +257,5 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, res *gaio.OpResult
 	ctx.expectedChar = 0
 
 	// toggle to process header
-	return proc.procHeader(ctx, res)
+	return proc.procHeader(ctx, conn)
 }
