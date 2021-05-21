@@ -130,22 +130,17 @@ func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 
 // process request
 func (proc *AsyncHttpProcessor) processRequest(ctx *AIOHttpContext, res *gaio.OpResult) {
-	if ctx.protoState == stateHeader {
-		// read into buffer
-		ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
+	// read into buffer
+	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
-		// try process header
+	// process header or body
+	if ctx.protoState == stateHeader {
 		if err := proc.procHeader(ctx, res.Conn); err == nil {
-			// initiate next reading
 			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 		} else {
 			proc.watcher.Free(res.Conn)
 		}
 	} else if ctx.protoState == stateBody {
-		// read into buffer
-		ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
-
-		// try process body
 		if err := proc.procBody(ctx, res.Conn); err == nil {
 			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		} else {
