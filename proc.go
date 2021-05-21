@@ -220,17 +220,18 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOHttpContext, conn net.Conn) err
 		return nil
 	}
 
-	// process request
+	// call back handler
 	if err := proc.handler(ctx); err != nil {
 		return err
 	}
 
-	// process request
+	// set required field
 	if ctx.ResponseData != nil {
 		ctx.Response.SetContentLength(len(ctx.ResponseData))
 	}
 	ctx.Response.Set("Connection", "Keep-Alive")
 
+	// send back
 	proc.watcher.Write(ctx, conn, append(ctx.Response.Header(), ctx.ResponseData...))
 
 	// set state back to header
