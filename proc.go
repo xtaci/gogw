@@ -91,16 +91,17 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 			}
 
 			for _, res := range results {
-				ctx := res.Context.(*AIOHttpContext)
-				if res.Operation == gaio.OpRead {
-					if res.Error == nil {
-						proc.processRequest(ctx, &res)
-					} else {
-						proc.watcher.Free(res.Conn)
-					}
-				} else if res.Operation == gaio.OpWrite {
-					if res.Error != nil {
-						proc.watcher.Free(res.Conn)
+				if ctx, ok := res.Context.(*AIOHttpContext); ok {
+					if res.Operation == gaio.OpRead {
+						if res.Error == nil {
+							proc.processRequest(ctx, &res)
+						} else {
+							proc.watcher.Free(res.Conn)
+						}
+					} else if res.Operation == gaio.OpWrite {
+						if res.Error != nil {
+							proc.watcher.Free(res.Conn)
+						}
 					}
 				}
 			}
