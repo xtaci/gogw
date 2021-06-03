@@ -200,6 +200,7 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOHttpContext, conn net.Conn) e
 
 		// prepare response struct
 		ctx.Response.Reset()
+		ctx.ResponseData = nil
 
 		// toggle to process header
 		return proc.procBody(ctx, conn)
