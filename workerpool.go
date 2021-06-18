@@ -1,23 +1,19 @@
 package aiohttp
 
 import (
-	"container/list"
-	"errors"
+	"log"
 	"net"
 
 	"github.com/xtaci/gaio"
 )
 
-var (
-	ErrAlreadyDelegated = errors.New("already delegated")
-)
-
 type RequestContent []byte
 
-// Delegated Request defines a single request to backend service
-type DelegatedRequest struct {
-	req         RequestContent
+type DelegatedRequestContext struct {
+	request     []byte
 	chCompleted chan []byte
+	client      net.Conn
+	remote      net.Conn
 }
 
 // Delegation Proxy delegates a special conn to remote,
@@ -29,37 +25,45 @@ type DelegatedRequest struct {
 //
 type DelegationProxy struct {
 	watcher *gaio.Watcher
-	queues  map[net.Conn]*list.List
 }
 
-func NewDelegationProxy() *DelegationProxy {
+func NewDelegationProxy(watcher *gaio.Watcher) *DelegationProxy {
 	proxy := new(DelegationProxy)
-	proxy.queues = make(map[net.Conn]*list.List)
+	proxy.watcher = watcher
 	return proxy
 }
 
 // Delegate queues a request for sequential accessing
-func (proxy *DelegationProxy) Delegate(remote net.Conn, request []byte, chCompleted chan []byte) error {
+func (proxy *DelegationProxy) Delegate(client net.Conn, remote net.Conn, request []byte, chCompleted chan []byte) error {
 	if remote == nil {
 		panic("nil conn")
 	}
 
-	// queue exists, enqueue
-	var q *list.List
-	var ok bool
-	if q, ok = proxy.queues[remote]; !ok {
-		proxy.queues[remote] = list.New()
-	}
-
-	// create delegated request
-	dr := new(DelegatedRequest)
-	dr.req = request
+	// create delegated request context
+	dr := new(DelegatedRequestContext)
+	dr.client = client
+	dr.remote = remote
+	dr.request = request
 	dr.chCompleted = chCompleted
-	q.PushBack(dr)
 
-	return nil
+	// watcher
+	err := proxy.watcher.Write(dr, remote, request)
+	return err
 }
 
 func (proxy *DelegationProxy) Start() {
+	go func() {
+		for {
+			// loop wait for any IO events
+			results, err := proxy.watcher.WaitIO()
+			if err != nil {
+				log.Println(err)
+				return
+			}
 
+			// context based req/resp matchintg
+			for _, _ = range results {
+			}
+		}
+	}()
 }
