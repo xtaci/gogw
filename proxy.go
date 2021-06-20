@@ -80,19 +80,19 @@ func (proxy *DelegationProxy) Start() {
 			for _, res := range results {
 				if ctx, ok := res.Context.(*DelegatedRequestContext); ok {
 					if res.Operation == gaio.OpRead {
-						if res.Error == nil {
-
-						} else {
+						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
+						} else {
+							proxy.processResponse(ctx, &res)
 						}
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
+						} else {
+							// if request writing to remote has completed successfully
+							// initate response reading
+							proxy.watcher.Read(ctx, res.Conn, nil)
 						}
-
-						// if request writing to remote has completed successfully
-						// initate response reading
-						proxy.watcher.Read(ctx, res.Conn, nil)
 					}
 				}
 			}
@@ -100,8 +100,8 @@ func (proxy *DelegationProxy) Start() {
 	}()
 }
 
-// process request
-func (proc *DelegationProxy) processRequest(ctx *DelegatedRequestContext, res *gaio.OpResult) {
+// process response
+func (proc *DelegationProxy) processResponse(ctx *DelegatedRequestContext, res *gaio.OpResult) {
 	// read into buffer
 	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
