@@ -46,6 +46,8 @@ type DelegationProxy struct {
 func NewDelegationProxy(watcher *gaio.Watcher) *DelegationProxy {
 	proxy := new(DelegationProxy)
 	proxy.watcher = watcher
+	proxy.headerTimeout = defaultHeaderTimeout
+	proxy.bodyTimeout = defaultBodyTimeout
 	return proxy
 }
 
@@ -56,14 +58,16 @@ func (proxy *DelegationProxy) Delegate(client net.Conn, remote net.Conn, request
 	}
 
 	// create delegated request context
-	dr := new(DelegatedRequestContext)
-	dr.client = client
-	dr.remote = remote
-	dr.request = request
-	dr.chCompleted = chCompleted
+	ctx := new(DelegatedRequestContext)
+	ctx.client = client
+	ctx.remote = remote
+	ctx.request = request
+	ctx.chCompleted = chCompleted
+	ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
+	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
 
 	// watcher
-	return proxy.watcher.Write(dr, remote, request)
+	return proxy.watcher.Write(ctx, remote, request)
 }
 
 func (proxy *DelegationProxy) Start() {
