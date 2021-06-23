@@ -13,6 +13,14 @@ var (
 	errPath = errors.New("incorrect path")
 )
 
+var (
+	delegatedURI map[string]string = map[string]string{
+		"/remote": "http://localhost:6060",
+	}
+
+	proxy *aiohttp.DelegationProxy
+)
+
 func handler(ctx *aiohttp.AIOHttpContext) error {
 	// parse URI
 	var URI aiohttp.URI // current incoming request's URL
@@ -21,18 +29,26 @@ func handler(ctx *aiohttp.AIOHttpContext) error {
 		return err
 	}
 
-	// http route
-	switch string(URI.Path()) {
-	case "/":
-		ctx.Response.SetStatusCode(200)
-		ctx.ResponseData = []byte("AIOHTTP")
-	default:
-		ctx.Response.SetStatusCode(404)
-		ctx.ResponseData = []byte("Not Found")
-
-		return errPath
+	// check if it's delegated URI
+	path := string(URI.Path())
+	if remote, ok := delegatedURI[path]; ok {
+		// TODO: delegates to proxy
+		//proxy.Delegate(
+		_ = remote
+		return nil
+	} else {
+		// http route
+		switch path {
+		case "/":
+			ctx.Response.SetStatusCode(200)
+			ctx.ResponseData = []byte("AIOHTTP")
+		}
+		return nil
 	}
-	return nil
+
+	ctx.Response.SetStatusCode(404)
+	ctx.ResponseData = []byte("Not Found")
+	return errPath
 }
 
 func main() {
