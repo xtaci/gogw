@@ -8,6 +8,28 @@ import (
 	"github.com/xtaci/gaio"
 )
 
+type weightedConn struct {
+	conn        net.Conn
+	numRequests uint32 // current requests
+}
+
+// Heaped least used connection
+type lruConns []*weightedConn
+
+func (h lruConns) Len() int           { return len(h) }
+func (h lruConns) Less(i, j int) bool { return h[i].numRequests < h[j].numRequests }
+func (h lruConns) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *lruConns) Push(x interface{}) { *h = append(*h, x.(*weightedConn)) }
+func (h *lruConns) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	old[n-1] = nil // avoid memory leak
+	*h = old[0 : n-1]
+	return x
+}
+
 // DelegatedRequestContext defines the context for a single remote request
 type DelegatedRequestContext struct {
 	protoState   int   // the state for reading
