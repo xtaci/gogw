@@ -1,27 +1,41 @@
 package aiohttp
 
 import (
+	"container/heap"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/xtaci/gaio"
 )
 
 type weightedConn struct {
-	conn        net.Conn
-	numRequests uint32 // current requests
+	idx          int
+	conn         net.Conn
+	numRequests  uint32 // current requests
+	disconnected bool   // mark if the connection has disconnected
+	sync.Mutex
 }
 
 // Heaped least used connection
-type lruConns []*weightedConn
+type weightedConnsHeap []*weightedConn
 
-func (h lruConns) Len() int           { return len(h) }
-func (h lruConns) Less(i, j int) bool { return h[i].numRequests < h[j].numRequests }
-func (h lruConns) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h weightedConnsHeap) Len() int           { return len(h) }
+func (h weightedConnsHeap) Less(i, j int) bool { return h[i].numRequests < h[j].numRequests }
+func (h weightedConnsHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].idx = i
+	h[j].idx = j
+}
 
-func (h *lruConns) Push(x interface{}) { *h = append(*h, x.(*weightedConn)) }
-func (h *lruConns) Pop() interface{} {
+func (h *weightedConnsHeap) Push(x interface{}) {
+	*h = append(*h, x.(*weightedConn))
+	n := len(*h)
+	(*h)[n-1].idx = n - 1
+}
+
+func (h *weightedConnsHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
 	x := old[n-1]
@@ -42,13 +56,21 @@ type DelegatedRequestContext struct {
 	respHeader     ResponseHeader
 	buffer         []byte
 	chCompleted    chan []byte
-	client         net.Conn
-	remote         net.Conn
+
+	client net.Conn
+
+	// heap manage
+	connsHeap *weightedConnsHeap
+	wConn     *weightedConn
 
 	// deadlines for reading, adjusted per request
 	headerDeadLine time.Time
 	bodyDeadLine   time.Time
 }
+
+const (
+	defaultMaximumURIConnections = 16
+)
 
 // Delegation Proxy delegates a special conn to remote,
 // and redirect it's IO to original connection:
@@ -62,6 +84,9 @@ type DelegationProxy struct {
 	watcher       *gaio.Watcher
 	headerTimeout time.Duration
 	bodyTimeout   time.Duration
+
+	maxConns int                           // maximum connections for a single URI
+	pool     map[string]*weightedConnsHeap // URI -> heap
 }
 
 // NewDelegationProxy creates a proxy to remote service
@@ -70,39 +95,75 @@ func NewDelegationProxy(watcher *gaio.Watcher) *DelegationProxy {
 	proxy.watcher = watcher
 	proxy.headerTimeout = defaultHeaderTimeout
 	proxy.bodyTimeout = defaultBodyTimeout
+	proxy.maxConns = defaultMaximumURIConnections
+	proxy.pool = make(map[string]*weightedConnsHeap)
 	return proxy
 }
 
-// Delegate queues a request for sequential remote accessing
-func (proxy *DelegationProxy) Delegate(client net.Conn, remote net.Conn, request []byte, chCompleted chan []byte) error {
-	if remote == nil {
-		panic("nil conn")
+func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConnsHeap, err error) {
+	h = new(weightedConnsHeap)
+
+	for i := 0; i < proxy.maxConns; i++ {
+		conn, err := net.Dial("tcp", remoteAddr)
+		if err != nil {
+			return nil, err
+		}
+
+		wConn := &weightedConn{conn: conn, numRequests: 0}
+		heap.Push(h, wConn)
 	}
 
-	// create delegated request context
+	return h, nil
+}
+
+// Delegate queues a request for sequential remote accessing
+func (proxy *DelegationProxy) Delegate(client net.Conn, remoteAddr string, request []byte, chCompleted chan []byte) error {
+	var connsHeap *weightedConnsHeap
+	var exists bool
+	var err error
+
+	// create if not initialized
+	connsHeap, exists = proxy.pool[remoteAddr]
+	if !exists {
+		// create conn
+		connsHeap, err = proxy.initConnsHeap(remoteAddr)
+		if err != nil {
+			return err
+		}
+		proxy.pool[remoteAddr] = connsHeap
+	}
+
 	ctx := new(DelegatedRequestContext)
+	// create delegated request context
 	ctx.client = client
-	ctx.remote = remote
 	ctx.request = request
 	ctx.chCompleted = chCompleted
 	ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
 	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
 
+	// load conn from heap
+	wConn := (*connsHeap)[0]
+	wConn.Lock()
+	conn := wConn.conn
+	ctx.wConn = wConn              // ref
+	ctx.connsHeap = connsHeap      // ref
+	wConn.numRequests++            // adjust weight
+	heap.Fix(connsHeap, wConn.idx) // heap fix
+	wConn.Unlock()
+
 	// watcher
-	return proxy.watcher.Write(ctx, remote, request)
+	return proxy.watcher.Write(ctx, conn, request)
 }
 
 func (proxy *DelegationProxy) Start() {
 	go func() {
 		for {
-			// loop wait for any IO events
 			results, err := proxy.watcher.WaitIO()
 			if err != nil {
 				log.Println(err)
 				return
 			}
 
-			// context based req/resp matchintg
 			for _, res := range results {
 				if ctx, ok := res.Context.(*DelegatedRequestContext); ok {
 					if res.Operation == gaio.OpRead {
@@ -188,6 +249,11 @@ func (proc *DelegationProxy) procHeader(ctx *DelegatedRequestContext, conn net.C
 func (proc *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Conn) error {
 	// read body data
 	if len(ctx.buffer) == ctx.respHeader.ContentLength() {
+		// once the request completes, we reduce the load of the connection
+		ctx.wConn.Lock()
+		ctx.wConn.numRequests--
+		heap.Fix(ctx.connsHeap, ctx.wConn.idx)
+		ctx.wConn.Unlock()
 	}
 
 	return nil
