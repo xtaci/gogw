@@ -144,12 +144,22 @@ func (proxy *DelegationProxy) Delegate(client net.Conn, remoteAddr string, reque
 	// load conn from heap
 	wConn := (*connsHeap)[0]
 	wConn.Lock()
+	defer wConn.Unlock()
+
 	conn := wConn.conn
+	// check disconnection
+	if wConn.disconnected {
+		conn, err := net.Dial("tcp", remoteAddr)
+		if err != nil {
+			return err
+		}
+		wConn := &weightedConn{conn: conn, numRequests: 0}
+		heap.Push(connsHeap, wConn)
+	}
 	ctx.wConn = wConn              // ref
 	ctx.connsHeap = connsHeap      // ref
 	wConn.numRequests++            // adjust weight
 	heap.Fix(connsHeap, wConn.idx) // heap fix
-	wConn.Unlock()
 
 	// watcher
 	return proxy.watcher.Write(ctx, conn, request)
