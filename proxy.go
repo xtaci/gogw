@@ -13,8 +13,8 @@ import (
 type weightedConn struct {
 	idx          int
 	conn         net.Conn
-	numRequests  uint32 // current requests
-	disconnected bool   // mark if the connection has disconnected
+	load         uint32 // connection load
+	disconnected bool   // mark whether the connection has disconnected
 	sync.Mutex
 }
 
@@ -22,7 +22,7 @@ type weightedConn struct {
 type weightedConnsHeap []*weightedConn
 
 func (h weightedConnsHeap) Len() int           { return len(h) }
-func (h weightedConnsHeap) Less(i, j int) bool { return h[i].numRequests < h[j].numRequests }
+func (h weightedConnsHeap) Less(i, j int) bool { return h[i].load < h[j].load }
 func (h weightedConnsHeap) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
 	h[i].idx = i
@@ -109,7 +109,7 @@ func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConns
 			return nil, err
 		}
 
-		wConn := &weightedConn{conn: conn, numRequests: 0}
+		wConn := &weightedConn{conn: conn, load: 0}
 		heap.Push(h, wConn)
 	}
 
@@ -153,13 +153,13 @@ func (proxy *DelegationProxy) Delegate(client net.Conn, remoteAddr string, reque
 		if err != nil {
 			return err
 		}
-		wConn := &weightedConn{conn: conn, numRequests: 0, idx: 0}
+		wConn := &weightedConn{conn: conn, load: 0, idx: 0}
 		// replace heap top element
 		(*connsHeap)[0] = wConn
 	}
 	ctx.wConn = wConn              // ref
 	ctx.connsHeap = connsHeap      // ref
-	wConn.numRequests++            // adjust weight
+	wConn.load++                   // adjust weight
 	heap.Fix(connsHeap, wConn.idx) // heap fix
 
 	// watcher
@@ -278,7 +278,7 @@ func (proc *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Con
 	if len(ctx.buffer) == ctx.respHeader.ContentLength() {
 		// once the request completes, we reduce the load of the connection
 		ctx.wConn.Lock()
-		ctx.wConn.numRequests--
+		ctx.wConn.load--
 		heap.Fix(ctx.connsHeap, ctx.wConn.idx)
 		ctx.wConn.Unlock()
 	}
