@@ -153,8 +153,9 @@ func (proxy *DelegationProxy) Delegate(client net.Conn, remoteAddr string, reque
 		if err != nil {
 			return err
 		}
-		wConn := &weightedConn{conn: conn, numRequests: 0}
-		heap.Push(connsHeap, wConn)
+		wConn := &weightedConn{conn: conn, numRequests: 0, idx: 0}
+		// replace heap top element
+		(*connsHeap)[0] = wConn
 	}
 	ctx.wConn = wConn              // ref
 	ctx.connsHeap = connsHeap      // ref
