@@ -170,6 +170,12 @@ func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chComp
 	return proxy.watcher.Write(ctx, conn, request)
 }
 
+func (proxy *DelegationProxy) markDisconnect(wConn *weightedConn) {
+	wConn.Lock()
+	wConn.disconnected = true
+	wConn.Unlock()
+}
+
 func (proxy *DelegationProxy) Start() {
 	go func() {
 		for {
@@ -184,20 +190,14 @@ func (proxy *DelegationProxy) Start() {
 					if res.Operation == gaio.OpRead {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
-							// mark the conn disconnected
-							ctx.wConn.Lock()
-							ctx.wConn.disconnected = true
-							ctx.wConn.Unlock()
+							proxy.markDisconnect(ctx.wConn) // mark the conn disconnected
 						} else {
 							proxy.processResponse(ctx, &res)
 						}
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
-							// mark the conn disconnected
-							ctx.wConn.Lock()
-							ctx.wConn.disconnected = true
-							ctx.wConn.Unlock()
+							proxy.markDisconnect(ctx.wConn) // mark the conn disconnected
 						} else {
 							// if request writing to remote has completed successfully
 							// initate response reading
@@ -211,36 +211,30 @@ func (proxy *DelegationProxy) Start() {
 }
 
 // process response
-func (proc *DelegationProxy) processResponse(ctx *DelegatedRequestContext, res *gaio.OpResult) {
+func (proxy *DelegationProxy) processResponse(ctx *DelegatedRequestContext, res *gaio.OpResult) {
 	// read into buffer
 	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
 	// process header or body
 	if ctx.protoState == stateHeader {
-		if err := proc.procHeader(ctx, res.Conn); err == nil {
-			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
+		if err := proxy.procHeader(ctx, res.Conn); err == nil {
+			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 		} else {
-			// close conn
-			ctx.wConn.Lock()
-			ctx.wConn.disconnected = true
-			ctx.wConn.Unlock()
-			proc.watcher.Free(res.Conn)
+			proxy.watcher.Free(res.Conn)
+			proxy.markDisconnect(ctx.wConn) // mark the conn disconnected
 		}
 	} else if ctx.protoState == stateBody {
-		if err := proc.procBody(ctx, res.Conn); err == nil {
-			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
+		if err := proxy.procBody(ctx, res.Conn); err == nil {
+			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		} else {
-			// close conn
-			ctx.wConn.Lock()
-			ctx.wConn.disconnected = true
-			ctx.wConn.Unlock()
-			proc.watcher.Free(res.Conn)
+			proxy.watcher.Free(res.Conn)
+			proxy.markDisconnect(ctx.wConn) // mark the conn disconnected
 		}
 	}
 }
 
 // process header fields
-func (proc *DelegationProxy) procHeader(ctx *DelegatedRequestContext, conn net.Conn) error {
+func (proxy *DelegationProxy) procHeader(ctx *DelegatedRequestContext, conn net.Conn) error {
 	var headerOK bool
 	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
 		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
@@ -270,14 +264,14 @@ func (proc *DelegationProxy) procHeader(ctx *DelegatedRequestContext, conn net.C
 		ctx.protoState = stateBody
 
 		// toggle to process header
-		return proc.procBody(ctx, conn)
+		return proxy.procBody(ctx, conn)
 	}
 
 	return nil
 }
 
 // process body
-func (proc *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Conn) error {
+func (proxy *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Conn) error {
 	// read body data
 	if len(ctx.buffer) == ctx.respHeader.ContentLength() {
 		// once the request completes, we reduce the load of the connection
