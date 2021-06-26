@@ -57,8 +57,6 @@ type DelegatedRequestContext struct {
 	buffer         []byte
 	chCompleted    chan []byte
 
-	client net.Conn
-
 	// heap manage
 	connsHeap *weightedConnsHeap
 	wConn     *weightedConn
@@ -90,14 +88,21 @@ type DelegationProxy struct {
 }
 
 // NewDelegationProxy creates a proxy to remote service
-func NewDelegationProxy(watcher *gaio.Watcher) *DelegationProxy {
+func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
+	// create watcher
+	watcher, err := gaio.NewWatcherSize(bufSize)
+	if err != nil {
+		return nil, err
+	}
+
+	// create proxy
 	proxy := new(DelegationProxy)
 	proxy.watcher = watcher
 	proxy.headerTimeout = defaultHeaderTimeout
 	proxy.bodyTimeout = defaultBodyTimeout
 	proxy.maxConns = defaultMaximumURIConnections
 	proxy.pool = make(map[string]*weightedConnsHeap)
-	return proxy
+	return proxy, nil
 }
 
 func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConnsHeap, err error) {
@@ -117,7 +122,7 @@ func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConns
 }
 
 // Delegate queues a request for sequential remote accessing
-func (proxy *DelegationProxy) Delegate(client net.Conn, remoteAddr string, request []byte, chCompleted chan []byte) error {
+func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chCompleted chan []byte) error {
 	var connsHeap *weightedConnsHeap
 	var exists bool
 	var err error
@@ -135,7 +140,6 @@ func (proxy *DelegationProxy) Delegate(client net.Conn, remoteAddr string, reque
 
 	ctx := new(DelegatedRequestContext)
 	// create delegated request context
-	ctx.client = client
 	ctx.request = request
 	ctx.chCompleted = chCompleted
 	ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
