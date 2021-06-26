@@ -281,6 +281,13 @@ func (proc *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Con
 		ctx.wConn.load--
 		heap.Fix(ctx.connsHeap, ctx.wConn.idx)
 		ctx.wConn.Unlock()
+
+		// also, send back the response, make a copy
+		respBytes := make([]byte, len(ctx.buffer))
+		copy(respBytes, ctx.buffer)
+
+		// TODO: chan close handle
+		ctx.chCompleted <- respBytes
 	}
 
 	return nil
