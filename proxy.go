@@ -180,12 +180,20 @@ func (proxy *DelegationProxy) Start() {
 					if res.Operation == gaio.OpRead {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
+							// mark the conn disconnected
+							ctx.wConn.Lock()
+							ctx.wConn.disconnected = true
+							ctx.wConn.Unlock()
 						} else {
 							proxy.processResponse(ctx, &res)
 						}
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
+							// mark the conn disconnected
+							ctx.wConn.Lock()
+							ctx.wConn.disconnected = true
+							ctx.wConn.Unlock()
 						} else {
 							// if request writing to remote has completed successfully
 							// initate response reading
@@ -208,12 +216,20 @@ func (proc *DelegationProxy) processResponse(ctx *DelegatedRequestContext, res *
 		if err := proc.procHeader(ctx, res.Conn); err == nil {
 			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 		} else {
+			// close conn
+			ctx.wConn.Lock()
+			ctx.wConn.disconnected = true
+			ctx.wConn.Unlock()
 			proc.watcher.Free(res.Conn)
 		}
 	} else if ctx.protoState == stateBody {
 		if err := proc.procBody(ctx, res.Conn); err == nil {
 			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		} else {
+			// close conn
+			ctx.wConn.Lock()
+			ctx.wConn.disconnected = true
+			ctx.wConn.Unlock()
 			proc.watcher.Free(res.Conn)
 		}
 	}
