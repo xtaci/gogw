@@ -273,7 +273,7 @@ func (proxy *DelegationProxy) procHeader(ctx *DelegatedRequestContext, conn net.
 // process body
 func (proxy *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Conn) error {
 	// read body data
-	if len(ctx.buffer) == ctx.respHeader.ContentLength() {
+	if len(ctx.buffer) >= ctx.respHeader.ContentLength() {
 		// once the request completes, we reduce the load of the connection
 		ctx.wConn.Lock()
 		ctx.wConn.load--
@@ -281,7 +281,7 @@ func (proxy *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Co
 		ctx.wConn.Unlock()
 
 		// also, send back the response, make a copy
-		respBytes := make([]byte, len(ctx.buffer))
+		respBytes := make([]byte, ctx.respHeader.ContentLength())
 		copy(respBytes, ctx.buffer)
 
 		// TODO: chan close handle
