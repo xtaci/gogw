@@ -3,7 +3,7 @@ package aiohttp
 var (
 	defaultServerName  = []byte("fasthttp")
 	defaultUserAgent   = []byte("fasthttp")
-	defaultContentType = []byte("text/plain; charset=utf-8")
+	defaultContentType = []byte("text/html")
 )
 
 var (
