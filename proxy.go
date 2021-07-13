@@ -262,7 +262,7 @@ func (proxy *DelegationProxy) Start() {
 						} else {
 							// if request writing to remote has completed successfully
 							// initate response reading
-							proxy.watcher.Read(ctx, res.Conn, nil)
+							proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 						}
 					}
 				}
@@ -274,26 +274,36 @@ func (proxy *DelegationProxy) Start() {
 // process response
 func (proxy *DelegationProxy) processResponse(ctx *delegatedRequestContext, res *gaio.OpResult) {
 	// read into buffer
+	var buf bytes.Buffer
+	buf.Write(res.Buffer[:res.Size])
 	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
 	// process header or body
-	if ctx.protoState == stateHeader {
-		if err := proxy.procHeader(ctx, res.Conn); err == nil {
-			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
-		} else {
+PROC_AGAIN:
+	switch ctx.protoState {
+	case stateHeader:
+		if err := proxy.procHeader(ctx, res.Conn); err != nil {
 			proxy.watcher.Free(res.Conn)
 			proxy.notifySchedulerError(ctx, err)
 			atomic.StoreInt32(&ctx.wConn.disconnected, 1)
+			return
 		}
-	} else if ctx.protoState == stateBody {
-		if err := proxy.procBody(ctx, res.Conn); err == nil {
-			if ctx.err == nil && ctx.respBytes == nil {
-				proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
-			}
-		} else {
+
+		if ctx.protoState == stateHeader {
+			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
+		} else if ctx.protoState == stateBody {
+			goto PROC_AGAIN
+		}
+	case stateBody:
+		if err := proxy.procBody(ctx, res.Conn); err != nil {
 			proxy.watcher.Free(res.Conn)
 			proxy.notifySchedulerError(ctx, err)
 			atomic.StoreInt32(&ctx.wConn.disconnected, 1)
+			return
+		}
+
+		if ctx.err == nil && ctx.respBytes == nil {
+			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		}
 	}
 }
@@ -329,8 +339,6 @@ func (proxy *DelegationProxy) procHeader(ctx *delegatedRequestContext, conn net.
 		ctx.nextCompare = 0
 		ctx.expectedChar = 0
 
-		// toggle to process header
-		return proxy.procBody(ctx, conn)
 	}
 
 	return nil
@@ -346,7 +354,7 @@ func (proxy *DelegationProxy) procBody(ctx *delegatedRequestContext, conn net.Co
 		for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
 			if ctx.buffer[i] == ChunkDataEndFlag[ctx.expectedChar] {
 				ctx.expectedChar++
-				if ctx.expectedChar == uint8(len(HeaderEndFlag)) {
+				if ctx.expectedChar == uint8(len(ChunkDataEndFlag)) {
 					dataOK = true
 					break
 				}

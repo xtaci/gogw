@@ -32,7 +32,7 @@ Host:127.0.0.1
 }
 
 func BenchmarkProxyRequest(b *testing.B) {
-	proxy, err := NewDelegationProxy(1024 * 1024)
+	proxy, err := NewDelegationProxy(16 * 1024 * 1024)
 	if err != nil {
 		panic(err)
 	}
