@@ -15,7 +15,7 @@ var (
 	errPath = errors.New("incorrect path")
 )
 
-func handler(ctx *aiohttp.AIOHttpContext) error {
+func handler(ctx *aiohttp.AIOContext) error {
 	// parse URI
 	var URI aiohttp.URI // current incoming request's URL
 	err := URI.Parse(nil, ctx.Header.RequestURI())

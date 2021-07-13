@@ -74,6 +74,9 @@ type RequestHeader struct {
 	host        []byte
 	contentType []byte
 	userAgent   []byte
+	path        []byte // 去掉？后的全路径  方便后续使用
+	hostName    []byte // hostname without port
+	upgrade     bool   // upgrade flag
 
 	h     []argsKV
 	bufKV argsKV
@@ -1801,6 +1804,13 @@ func (h *RequestHeader) parseFirstLine(buf []byte) (int, error) {
 	h.proto = append(h.proto[:0], protoStr...)
 	h.requestURI = append(h.requestURI[:0], b[:n]...)
 
+	n = bytes.LastIndexByte(h.requestURI, '?')
+	if n >= 0 {
+		h.path = h.requestURI[:n+1]
+	} else {
+		h.path = h.requestURI
+	}
+
 	return len(buf) - len(bNext), nil
 }
 
@@ -1963,6 +1973,10 @@ func (h *RequestHeader) parseHeaders(buf []byte) (int, error) {
 			case 'h':
 				if caseInsensitiveCompare(s.key, strHost) {
 					h.host = append(h.host[:0], s.value...)
+					n := bytes.IndexByte(h.host, ':')
+					if n > 0 {
+						h.hostName = h.host[:n]
+					}
 					continue
 				}
 			case 'u':
@@ -1990,11 +2004,14 @@ func (h *RequestHeader) parseHeaders(buf []byte) (int, error) {
 					continue
 				}
 				if caseInsensitiveCompare(s.key, strConnection) {
-					if bytes.Equal(s.value, strClose) {
+					if caseInsensitiveContain(s.value, strClose) {
 						h.connectionClose = true
 					} else {
 						h.connectionClose = false
 						h.h = appendArgBytes(h.h, s.key, s.value, argsHasValue)
+					}
+					if caseInsensitiveContain(s.value, strUpgrade) {
+						h.upgrade = true
 					}
 					continue
 				}
