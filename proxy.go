@@ -1,6 +1,7 @@
 package aiohttp
 
 import (
+	"bytes"
 	"container/heap"
 	"io"
 	"log"
@@ -210,14 +211,19 @@ LOOP:
 			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
 
 			// check error
-			resp := ctx.respBytes
+			var bts []byte
 			if ctx.err != nil {
-				resp = proxyErrResponse(ctx.err)
+				bts = proxyErrResponse(ctx.err)
+			} else if len(ctx.respBytes) > 0 {
+				var resp bytes.Buffer
+				resp.Write(ctx.respHeader.Header())
+				resp.Write(ctx.respBytes)
+				bts = resp.Bytes()
 			}
 
 			// send back response
 			select {
-			case ctx.chResponse <- resp:
+			case ctx.chResponse <- bts:
 			case <-proxy.die:
 				return
 			}
@@ -351,12 +357,6 @@ func (proxy *DelegationProxy) procBody(ctx *delegatedRequestContext, conn net.Co
 		if dataOK {
 			ctx.respBytes = make([]byte, len(ctx.buffer))
 			copy(ctx.respBytes, ctx.buffer)
-
-			select {
-			case proxy.chIOCompleted <- ctx:
-			case <-proxy.die:
-				return io.EOF
-			}
 		}
 
 	} else if contentLength > 0 {
@@ -365,12 +365,15 @@ func (proxy *DelegationProxy) procBody(ctx *delegatedRequestContext, conn net.Co
 			// notify request scheduler
 			ctx.respBytes = make([]byte, ctx.respHeader.ContentLength())
 			copy(ctx.respBytes, ctx.buffer)
+		}
+	}
 
-			select {
-			case proxy.chIOCompleted <- ctx:
-			case <-proxy.die:
-				return io.EOF
-			}
+	// check if response is ready
+	if ctx.respBytes != nil {
+		select {
+		case proxy.chIOCompleted <- ctx:
+		case <-proxy.die:
+			return io.EOF
 		}
 	}
 
