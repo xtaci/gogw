@@ -2,6 +2,7 @@ package aiohttp
 
 import (
 	"container/heap"
+	"io"
 	"log"
 	"net"
 	"sync/atomic"
@@ -43,20 +44,22 @@ func (h *weightedConnsHeap) Pop() interface{} {
 	return x
 }
 
-// DelegatedRequestContext defines the context for a single remote request
-type DelegatedRequestContext struct {
+// delegatedRequestContext defines the context for a single remote request
+type delegatedRequestContext struct {
 	remoteAddr   string
 	protoState   int   // the state for reading
 	expectedChar uint8 // fast indexing for end of header
 	nextCompare  int
 
-	request []byte // input request
+	request    []byte      // input request
+	chResponse chan []byte // caller's response chan
 
+	// watcher's temp data
 	respHeaderSize int
 	respHeader     ResponseHeader
 	buffer         []byte
 	respBytes      []byte
-	chResponse     chan []byte
+	err            error
 
 	// heap data references
 	connsHeap *weightedConnsHeap
@@ -85,8 +88,8 @@ type DelegationProxy struct {
 	headerTimeout time.Duration
 	bodyTimeout   time.Duration
 
-	chRequests    chan *DelegatedRequestContext
-	chIOCompleted chan *DelegatedRequestContext
+	chRequests    chan *delegatedRequestContext
+	chIOCompleted chan *delegatedRequestContext
 
 	maxConns int                           // maximum connections for a single URI
 	pool     map[string]*weightedConnsHeap // URI -> heap
@@ -107,8 +110,8 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 	proxy.bodyTimeout = defaultBodyTimeout
 	proxy.maxConns = defaultMaximumURIConnections
 	proxy.pool = make(map[string]*weightedConnsHeap)
-	proxy.chRequests = make(chan *DelegatedRequestContext)
-	proxy.chIOCompleted = make(chan *DelegatedRequestContext)
+	proxy.chRequests = make(chan *delegatedRequestContext)
+	proxy.chIOCompleted = make(chan *delegatedRequestContext)
 	proxy.die = make(chan struct{})
 	return proxy, nil
 }
@@ -132,23 +135,8 @@ func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConns
 // Delegate queues a request for sequential remote accessing
 // TODO: a request has a guaranteed response
 func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chResponse chan []byte) error {
-	var connsHeap *weightedConnsHeap
-	var exists bool
-	var err error
-
-	// create if not initialized
-	connsHeap, exists = proxy.pool[remoteAddr]
-	if !exists {
-		// create conn
-		connsHeap, err = proxy.initConnsHeap(remoteAddr)
-		if err != nil {
-			return err
-		}
-		proxy.pool[remoteAddr] = connsHeap
-	}
-
 	// create delegated request context
-	ctx := new(DelegatedRequestContext)
+	ctx := new(delegatedRequestContext)
 	ctx.protoState = stateHeader
 	ctx.request = request
 	ctx.chResponse = chResponse
@@ -160,37 +148,72 @@ func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chResp
 }
 
 func (proxy *DelegationProxy) requestScheduler() {
+LOOP:
 	for {
 		select {
 		case ctx := <-proxy.chRequests:
-			connsHeap := proxy.pool[ctx.remoteAddr]
+			var connsHeap *weightedConnsHeap
+			var exists bool
+			var err error
+
+			// create if not initialized
+			connsHeap, exists = proxy.pool[ctx.remoteAddr]
+			if !exists {
+				// create conn
+				connsHeap, err = proxy.initConnsHeap(ctx.remoteAddr)
+				if err != nil {
+					select {
+					case ctx.chResponse <- proxyErrResponse(proxyRemoteDisconnected, err):
+					case <-proxy.die:
+						return
+					}
+					continue LOOP
+				}
+				proxy.pool[ctx.remoteAddr] = connsHeap
+			}
+
 			// load conn from heap
 			wConn := (*connsHeap)[0]
-			// check disconnection
 			if atomic.LoadInt32(&wConn.disconnected) == 1 {
+				// re-connect if disconnected
 				conn, err := net.Dial("tcp", ctx.remoteAddr)
 				if err != nil {
-					// TODO:
+					select {
+					case ctx.chResponse <- proxyErrResponse(proxyRemoteDisconnected, err):
+					case <-proxy.die:
+						return
+					}
+					continue LOOP
+				} else {
+					wConn := &weightedConn{conn: conn, load: 0, idx: 0}
+					// replace heap top element
+					(*connsHeap)[0] = wConn
 				}
-				wConn := &weightedConn{conn: conn, load: 0, idx: 0}
-				// replace heap top element
-				(*connsHeap)[0] = wConn
 			}
+
+			// successfully loaded connection, bind some vars
 			ctx.wConn = wConn              // ref
 			ctx.connsHeap = connsHeap      // ref
 			wConn.load++                   // adjust weight
 			heap.Fix(connsHeap, wConn.idx) // heap fix
 
-			// watcher
+			// delegate context to watcher
 			proxy.watcher.Write(ctx, ctx.wConn.conn, ctx.request)
+
 		case ctx := <-proxy.chIOCompleted:
 			// once the request completes, we reduce the load of the connection
 			ctx.wConn.load--
 			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
 
-			// send back request
+			// check error
+			resp := ctx.respBytes
+			if ctx.err != nil {
+				resp = proxyErrResponse(proxyRemoteInternalError, ctx.err)
+			}
+
+			// send back response
 			select {
-			case ctx.chResponse <- ctx.respBytes:
+			case ctx.chResponse <- resp:
 			case <-proxy.die:
 				return
 			}
@@ -212,10 +235,11 @@ func (proxy *DelegationProxy) Start() {
 			}
 
 			for _, res := range results {
-				if ctx, ok := res.Context.(*DelegatedRequestContext); ok {
+				if ctx, ok := res.Context.(*delegatedRequestContext); ok {
 					if res.Operation == gaio.OpRead {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
+							proxy.notifySchedulerError(ctx, err)
 							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 						} else {
 							proxy.processResponse(ctx, &res)
@@ -223,6 +247,7 @@ func (proxy *DelegationProxy) Start() {
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
+							proxy.notifySchedulerError(ctx, err)
 							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 						} else {
 							// if request writing to remote has completed successfully
@@ -237,7 +262,7 @@ func (proxy *DelegationProxy) Start() {
 }
 
 // process response
-func (proxy *DelegationProxy) processResponse(ctx *DelegatedRequestContext, res *gaio.OpResult) {
+func (proxy *DelegationProxy) processResponse(ctx *delegatedRequestContext, res *gaio.OpResult) {
 	// read into buffer
 	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 
@@ -247,6 +272,7 @@ func (proxy *DelegationProxy) processResponse(ctx *DelegatedRequestContext, res 
 			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 		} else {
 			proxy.watcher.Free(res.Conn)
+			proxy.notifySchedulerError(ctx, err)
 			atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 		}
 	} else if ctx.protoState == stateBody {
@@ -254,13 +280,14 @@ func (proxy *DelegationProxy) processResponse(ctx *DelegatedRequestContext, res 
 			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		} else {
 			proxy.watcher.Free(res.Conn)
+			proxy.notifySchedulerError(ctx, err)
 			atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 		}
 	}
 }
 
 // process header fields
-func (proxy *DelegationProxy) procHeader(ctx *DelegatedRequestContext, conn net.Conn) error {
+func (proxy *DelegationProxy) procHeader(ctx *delegatedRequestContext, conn net.Conn) error {
 	var headerOK bool
 	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
 		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
@@ -297,7 +324,7 @@ func (proxy *DelegationProxy) procHeader(ctx *DelegatedRequestContext, conn net.
 }
 
 // process body
-func (proxy *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Conn) error {
+func (proxy *DelegationProxy) procBody(ctx *delegatedRequestContext, conn net.Conn) error {
 	// read body data
 	if len(ctx.buffer) >= ctx.respHeader.ContentLength() {
 		// notify request scheduler
@@ -307,9 +334,19 @@ func (proxy *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Co
 		select {
 		case proxy.chIOCompleted <- ctx:
 		case <-proxy.die:
-			return nil
+			return io.EOF
 		}
 	}
 
 	return nil
+}
+
+func (proxy *DelegationProxy) notifySchedulerError(ctx *delegatedRequestContext, err error) {
+	ctx.err = err
+
+	select {
+	case proxy.chIOCompleted <- ctx:
+	case <-proxy.die:
+		return
+	}
 }
