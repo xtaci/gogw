@@ -318,6 +318,8 @@ func (proxy *DelegationProxy) procHeader(ctx *delegatedRequestContext, conn net.
 
 		// start to read body
 		ctx.protoState = stateBody
+		ctx.nextCompare = 0
+		ctx.expectedChar = 0
 
 		// toggle to process header
 		return proxy.procBody(ctx, conn)
@@ -328,18 +330,47 @@ func (proxy *DelegationProxy) procHeader(ctx *delegatedRequestContext, conn net.
 
 // process body
 func (proxy *DelegationProxy) procBody(ctx *delegatedRequestContext, conn net.Conn) error {
-	// read body data
-	if len(ctx.buffer) >= ctx.respHeader.ContentLength() {
-		// notify request scheduler
-		log.Println(ctx.respHeader.String())
-		log.Println(ctx.respHeader.ContentLength())
-		ctx.respBytes = make([]byte, ctx.respHeader.ContentLength())
-		copy(ctx.respBytes, ctx.buffer)
+	contentLength := ctx.respHeader.ContentLength()
+	if contentLength == -1 {
+		// chunked data
+		// read until \r\n\r\n
+		var dataOK bool
+		for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
+			if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
+				ctx.expectedChar++
+				if ctx.expectedChar == uint8(len(HeaderEndFlag)) {
+					dataOK = true
+					break
+				}
+			} else {
+				ctx.expectedChar = 0
+			}
+		}
+		ctx.nextCompare = len(ctx.buffer)
 
-		select {
-		case proxy.chIOCompleted <- ctx:
-		case <-proxy.die:
-			return io.EOF
+		if dataOK {
+			ctx.respBytes = make([]byte, len(ctx.buffer))
+			copy(ctx.respBytes, ctx.buffer)
+
+			select {
+			case proxy.chIOCompleted <- ctx:
+			case <-proxy.die:
+				return io.EOF
+			}
+		}
+
+	} else if contentLength > 0 {
+		// read body data
+		if len(ctx.buffer) >= contentLength {
+			// notify request scheduler
+			ctx.respBytes = make([]byte, ctx.respHeader.ContentLength())
+			copy(ctx.respBytes, ctx.buffer)
+
+			select {
+			case proxy.chIOCompleted <- ctx:
+			case <-proxy.die:
+				return io.EOF
+			}
 		}
 	}
 
