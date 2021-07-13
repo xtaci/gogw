@@ -116,6 +116,20 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 	return proxy, nil
 }
 
+// Delegate queues a request for sequential remote accessing
+func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chResponse chan []byte) error {
+	// create delegated request context
+	ctx := new(delegatedRequestContext)
+	ctx.protoState = stateHeader
+	ctx.request = request
+	ctx.chResponse = chResponse
+	ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
+	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
+
+	proxy.chRequests <- ctx
+	return nil
+}
+
 func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConnsHeap, err error) {
 	h = new(weightedConnsHeap)
 
@@ -130,21 +144,6 @@ func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConns
 	}
 
 	return h, nil
-}
-
-// Delegate queues a request for sequential remote accessing
-// TODO: a request has a guaranteed response
-func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chResponse chan []byte) error {
-	// create delegated request context
-	ctx := new(delegatedRequestContext)
-	ctx.protoState = stateHeader
-	ctx.request = request
-	ctx.chResponse = chResponse
-	ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
-	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
-
-	proxy.chRequests <- ctx
-	return nil
 }
 
 func (proxy *DelegationProxy) requestScheduler() {
@@ -185,8 +184,8 @@ LOOP:
 					}
 					continue LOOP
 				} else {
-					wConn := &weightedConn{conn: conn, load: 0, idx: 0}
 					// replace heap top element
+					wConn = &weightedConn{conn: conn, load: 0, idx: 0}
 					(*connsHeap)[0] = wConn
 				}
 			}
@@ -201,7 +200,7 @@ LOOP:
 			proxy.watcher.Write(ctx, ctx.wConn.conn, ctx.request)
 
 		case ctx := <-proxy.chIOCompleted:
-			// once the request completes, we reduce the load of the connection
+			// once the request completed, we reduce the load of the connection
 			ctx.wConn.load--
 			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
 
@@ -239,7 +238,7 @@ func (proxy *DelegationProxy) Start() {
 					if res.Operation == gaio.OpRead {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
-							proxy.notifySchedulerError(ctx, err)
+							proxy.notifySchedulerError(ctx, res.Error)
 							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 						} else {
 							proxy.processResponse(ctx, &res)
@@ -247,7 +246,7 @@ func (proxy *DelegationProxy) Start() {
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
-							proxy.notifySchedulerError(ctx, err)
+							proxy.notifySchedulerError(ctx, res.Error)
 							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 						} else {
 							// if request writing to remote has completed successfully
@@ -306,7 +305,6 @@ func (proxy *DelegationProxy) procHeader(ctx *delegatedRequestContext, conn net.
 		var err error
 		ctx.respHeaderSize, err = ctx.respHeader.parse(ctx.buffer)
 		if err != nil {
-			//	log.Println(err)
 			return err
 		}
 
