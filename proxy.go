@@ -4,7 +4,7 @@ import (
 	"container/heap"
 	"log"
 	"net"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtaci/gaio"
@@ -14,8 +14,7 @@ type weightedConn struct {
 	idx          int
 	conn         net.Conn
 	load         uint32 // connection load
-	disconnected bool   // mark whether the connection has disconnected
-	sync.Mutex
+	disconnected int32  // atomic flag to mark whether the connection has disconnected
 }
 
 // Heaped least used connection
@@ -46,6 +45,7 @@ func (h *weightedConnsHeap) Pop() interface{} {
 
 // DelegatedRequestContext defines the context for a single remote request
 type DelegatedRequestContext struct {
+	remoteAddr   string
 	protoState   int   // the state for reading
 	expectedChar uint8 // fast indexing for end of header
 	nextCompare  int
@@ -55,9 +55,10 @@ type DelegatedRequestContext struct {
 	respHeaderSize int
 	respHeader     ResponseHeader
 	buffer         []byte
-	chCompleted    chan []byte
+	respBytes      []byte
+	chResponse     chan []byte
 
-	// heap manage
+	// heap data references
 	connsHeap *weightedConnsHeap
 	wConn     *weightedConn
 
@@ -79,9 +80,13 @@ const (
 //
 //
 type DelegationProxy struct {
+	die           chan struct{}
 	watcher       *gaio.Watcher
 	headerTimeout time.Duration
 	bodyTimeout   time.Duration
+
+	chRequests    chan *DelegatedRequestContext
+	chIOCompleted chan *DelegatedRequestContext
 
 	maxConns int                           // maximum connections for a single URI
 	pool     map[string]*weightedConnsHeap // URI -> heap
@@ -102,6 +107,9 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 	proxy.bodyTimeout = defaultBodyTimeout
 	proxy.maxConns = defaultMaximumURIConnections
 	proxy.pool = make(map[string]*weightedConnsHeap)
+	proxy.chRequests = make(chan *DelegatedRequestContext)
+	proxy.chIOCompleted = make(chan *DelegatedRequestContext)
+	proxy.die = make(chan struct{})
 	return proxy, nil
 }
 
@@ -122,7 +130,8 @@ func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConns
 }
 
 // Delegate queues a request for sequential remote accessing
-func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chCompleted chan []byte) error {
+// TODO: a request has a guaranteed response
+func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chResponse chan []byte) error {
 	var connsHeap *weightedConnsHeap
 	var exists bool
 	var err error
@@ -138,45 +147,62 @@ func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chComp
 		proxy.pool[remoteAddr] = connsHeap
 	}
 
-	ctx := new(DelegatedRequestContext)
 	// create delegated request context
+	ctx := new(DelegatedRequestContext)
+	ctx.protoState = stateHeader
 	ctx.request = request
-	ctx.chCompleted = chCompleted
+	ctx.chResponse = chResponse
 	ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
 	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
 
-	// load conn from heap
-	wConn := (*connsHeap)[0]
-	wConn.Lock()
-	defer wConn.Unlock()
-
-	conn := wConn.conn
-	// check disconnection
-	if wConn.disconnected {
-		conn, err := net.Dial("tcp", remoteAddr)
-		if err != nil {
-			return err
-		}
-		wConn := &weightedConn{conn: conn, load: 0, idx: 0}
-		// replace heap top element
-		(*connsHeap)[0] = wConn
-	}
-	ctx.wConn = wConn              // ref
-	ctx.connsHeap = connsHeap      // ref
-	wConn.load++                   // adjust weight
-	heap.Fix(connsHeap, wConn.idx) // heap fix
-
-	// watcher
-	return proxy.watcher.Write(ctx, conn, request)
+	proxy.chRequests <- ctx
+	return nil
 }
 
-func (proxy *DelegationProxy) markDisconnect(wConn *weightedConn) {
-	wConn.Lock()
-	wConn.disconnected = true
-	wConn.Unlock()
+func (proxy *DelegationProxy) requestScheduler() {
+	for {
+		select {
+		case ctx := <-proxy.chRequests:
+			connsHeap := proxy.pool[ctx.remoteAddr]
+			// load conn from heap
+			wConn := (*connsHeap)[0]
+			// check disconnection
+			if atomic.LoadInt32(&wConn.disconnected) == 1 {
+				conn, err := net.Dial("tcp", ctx.remoteAddr)
+				if err != nil {
+					// TODO:
+				}
+				wConn := &weightedConn{conn: conn, load: 0, idx: 0}
+				// replace heap top element
+				(*connsHeap)[0] = wConn
+			}
+			ctx.wConn = wConn              // ref
+			ctx.connsHeap = connsHeap      // ref
+			wConn.load++                   // adjust weight
+			heap.Fix(connsHeap, wConn.idx) // heap fix
+
+			// watcher
+			proxy.watcher.Write(ctx, ctx.wConn.conn, ctx.request)
+		case ctx := <-proxy.chIOCompleted:
+			// once the request completes, we reduce the load of the connection
+			ctx.wConn.load--
+			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
+
+			// send back request
+			select {
+			case ctx.chResponse <- ctx.respBytes:
+			case <-proxy.die:
+				return
+			}
+		case <-proxy.die:
+			return
+		}
+	}
 }
 
 func (proxy *DelegationProxy) Start() {
+	go proxy.requestScheduler()
+
 	go func() {
 		for {
 			results, err := proxy.watcher.WaitIO()
@@ -190,14 +216,14 @@ func (proxy *DelegationProxy) Start() {
 					if res.Operation == gaio.OpRead {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
-							proxy.markDisconnect(ctx.wConn) // mark the conn disconnected
+							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 						} else {
 							proxy.processResponse(ctx, &res)
 						}
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
-							proxy.markDisconnect(ctx.wConn) // mark the conn disconnected
+							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 						} else {
 							// if request writing to remote has completed successfully
 							// initate response reading
@@ -221,14 +247,14 @@ func (proxy *DelegationProxy) processResponse(ctx *DelegatedRequestContext, res 
 			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 		} else {
 			proxy.watcher.Free(res.Conn)
-			proxy.markDisconnect(ctx.wConn) // mark the conn disconnected
+			atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 		}
 	} else if ctx.protoState == stateBody {
 		if err := proxy.procBody(ctx, res.Conn); err == nil {
 			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		} else {
 			proxy.watcher.Free(res.Conn)
-			proxy.markDisconnect(ctx.wConn) // mark the conn disconnected
+			atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 		}
 	}
 }
@@ -274,18 +300,15 @@ func (proxy *DelegationProxy) procHeader(ctx *DelegatedRequestContext, conn net.
 func (proxy *DelegationProxy) procBody(ctx *DelegatedRequestContext, conn net.Conn) error {
 	// read body data
 	if len(ctx.buffer) >= ctx.respHeader.ContentLength() {
-		// once the request completes, we reduce the load of the connection
-		ctx.wConn.Lock()
-		ctx.wConn.load--
-		heap.Fix(ctx.connsHeap, ctx.wConn.idx)
-		ctx.wConn.Unlock()
+		// notify request scheduler
+		ctx.respBytes = make([]byte, ctx.respHeader.ContentLength())
+		copy(ctx.respBytes, ctx.buffer)
 
-		// also, send back the response, make a copy
-		respBytes := make([]byte, ctx.respHeader.ContentLength())
-		copy(respBytes, ctx.buffer)
-
-		// TODO: chan close handle
-		ctx.chCompleted <- respBytes
+		select {
+		case proxy.chIOCompleted <- ctx:
+		case <-proxy.die:
+			return nil
+		}
 	}
 
 	return nil
