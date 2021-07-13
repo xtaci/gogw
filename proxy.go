@@ -287,7 +287,9 @@ func (proxy *DelegationProxy) processResponse(ctx *delegatedRequestContext, res 
 		}
 	} else if ctx.protoState == stateBody {
 		if err := proxy.procBody(ctx, res.Conn); err == nil {
-			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
+			if ctx.err == nil && ctx.respBytes == nil {
+				proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
+			}
 		} else {
 			proxy.watcher.Free(res.Conn)
 			proxy.notifySchedulerError(ctx, err)
@@ -342,7 +344,7 @@ func (proxy *DelegationProxy) procBody(ctx *delegatedRequestContext, conn net.Co
 		// read until \r\n\r\n
 		var dataOK bool
 		for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
-			if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
+			if ctx.buffer[i] == ChunkDataEndFlag[ctx.expectedChar] {
 				ctx.expectedChar++
 				if ctx.expectedChar == uint8(len(HeaderEndFlag)) {
 					dataOK = true
@@ -363,7 +365,7 @@ func (proxy *DelegationProxy) procBody(ctx *delegatedRequestContext, conn net.Co
 		// read body data
 		if len(ctx.buffer) >= contentLength {
 			// notify request scheduler
-			ctx.respBytes = make([]byte, ctx.respHeader.ContentLength())
+			ctx.respBytes = make([]byte, contentLength)
 			copy(ctx.respBytes, ctx.buffer)
 		}
 	}

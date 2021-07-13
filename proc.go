@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	HeaderEndFlag = []byte("\r\n\r\n")
+	HeaderEndFlag    = []byte("\r\n\r\n")
+	ChunkDataEndFlag = []byte("0\r\n\r\n")
 )
 
 const (
