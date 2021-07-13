@@ -14,13 +14,10 @@ Connection: Closed
 
 %v
 `
-	proxyRemoteDisconnected  = "remote disconnected"
-	proxyRemoteTimeout       = "remote timeout"
-	proxyRemoteInternalError = "remote internal error"
 )
 
-func proxyErrResponse(format string, err error) []byte {
+func proxyErrResponse(err error) []byte {
 	errString := fmt.Sprint(err)
-	str := fmt.Sprintf(format, time.Now(), len(errString), errString)
+	str := fmt.Sprintf(proxyResponseTemplate, time.Now(), len(errString), errString)
 	return []byte(str)
 }

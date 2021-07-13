@@ -120,13 +120,18 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 func (proxy *DelegationProxy) Delegate(remoteAddr string, request []byte, chResponse chan []byte) error {
 	// create delegated request context
 	ctx := new(delegatedRequestContext)
+	ctx.remoteAddr = remoteAddr
 	ctx.protoState = stateHeader
 	ctx.request = request
 	ctx.chResponse = chResponse
 	ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
 	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
 
-	proxy.chRequests <- ctx
+	select {
+	case proxy.chRequests <- ctx:
+	case <-proxy.die:
+		return io.EOF
+	}
 	return nil
 }
 
@@ -162,7 +167,7 @@ LOOP:
 				connsHeap, err = proxy.initConnsHeap(ctx.remoteAddr)
 				if err != nil {
 					select {
-					case ctx.chResponse <- proxyErrResponse(proxyRemoteDisconnected, err):
+					case ctx.chResponse <- proxyErrResponse(err):
 					case <-proxy.die:
 						return
 					}
@@ -178,7 +183,7 @@ LOOP:
 				conn, err := net.Dial("tcp", ctx.remoteAddr)
 				if err != nil {
 					select {
-					case ctx.chResponse <- proxyErrResponse(proxyRemoteDisconnected, err):
+					case ctx.chResponse <- proxyErrResponse(err):
 					case <-proxy.die:
 						return
 					}
@@ -207,7 +212,7 @@ LOOP:
 			// check error
 			resp := ctx.respBytes
 			if ctx.err != nil {
-				resp = proxyErrResponse(proxyRemoteInternalError, ctx.err)
+				resp = proxyErrResponse(ctx.err)
 			}
 
 			// send back response
@@ -326,6 +331,8 @@ func (proxy *DelegationProxy) procBody(ctx *delegatedRequestContext, conn net.Co
 	// read body data
 	if len(ctx.buffer) >= ctx.respHeader.ContentLength() {
 		// notify request scheduler
+		log.Println(ctx.respHeader.String())
+		log.Println(ctx.respHeader.ContentLength())
 		ctx.respBytes = make([]byte, ctx.respHeader.ContentLength())
 		copy(ctx.respBytes, ctx.buffer)
 
