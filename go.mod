@@ -9,5 +9,5 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.5.1
 	github.com/valyala/bytebufferpool v1.0.0
-	github.com/xtaci/gaio v1.2.11
+	github.com/xtaci/gaio v1.2.12-0.20210715022038-d1789c953c4f
 )

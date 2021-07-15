@@ -19,6 +19,8 @@ github.com/xtaci/gaio v1.2.11-0.20210611042229-2fcc5908e1ec h1:OVY5/MF2dYb/+mtEU
 github.com/xtaci/gaio v1.2.11-0.20210611042229-2fcc5908e1ec/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
 github.com/xtaci/gaio v1.2.11 h1:ne7X8zBrqj/Qxrvrr6LHCgoC12f+hDoTNt0/4cl2NfI=
 github.com/xtaci/gaio v1.2.11/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
+github.com/xtaci/gaio v1.2.12-0.20210715022038-d1789c953c4f h1:bwmkDZ9I25m8vCVBU6iQrUhcUMkiUclZ4kM/4/gJvIs=
+github.com/xtaci/gaio v1.2.12-0.20210715022038-d1789c953c4f/go.mod h1:rJMerwiLCLnKa14YTM/sRggTPrnBZrlCg9U3DnV5VBE=
 golang.org/x/sys v0.0.0-20190228124157-a34e9553db1e h1:ZytStCyV048ZqDsWHiYDdoI2Vd4msMcrDECFxS+tL9c=
 golang.org/x/sys v0.0.0-20190228124157-a34e9553db1e/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
