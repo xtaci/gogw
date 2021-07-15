@@ -4,7 +4,10 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func init() {
@@ -72,4 +75,40 @@ Host:127.0.0.1
 	for i := 0; i < n; i++ {
 		proxy.Delegate("localhost:6060", []byte(request), chResponse)
 	}
+}
+
+func TestProxyConfigParser(t *testing.T) {
+	testString := `
+/abc
+127.0.0.1:6060
+
+/a/.*/b
+
+127.0.0.1:8080
+
+/def
+127.0.0.1:9090
+`
+
+	reader := strings.NewReader(testString)
+
+	config, err := ParseProxyConfig(reader)
+	assert.Nil(t, err)
+
+	for k := range config.services {
+		t.Logf("regexp:%v address:%v", config.services[k].regexp.String(), config.services[k].address)
+	}
+
+	var uri URI
+	err = uri.Parse(nil, []byte("/abc/"))
+	assert.Nil(t, err)
+	address, valid := config.Match(&uri)
+	assert.True(t, valid)
+	t.Log(string(uri.Path()), valid, address)
+
+	err = uri.Parse(nil, []byte("/def?adfadf=a"))
+	assert.Nil(t, err)
+	address, valid = config.Match(&uri)
+	assert.True(t, valid)
+	t.Log(string(uri.Path()), valid, address)
 }
