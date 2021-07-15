@@ -31,6 +31,24 @@ Host:127.0.0.1
 	t.Log(string(<-chResponse))
 }
 
+func TestIllegalProxyRequest(t *testing.T) {
+
+	proxy, err := NewDelegationProxy(1024 * 1024)
+	if err != nil {
+		panic(err)
+	}
+	proxy.Start()
+
+	request := `GET /debug/pprof/ HTTP/1.1
+Host:127.0.0.1
+
+`
+	chResponse := make(chan []byte, 1)
+	proxy.Delegate("localhost:6068", []byte(request), chResponse)
+
+	t.Log(string(<-chResponse))
+}
+
 func BenchmarkProxyRequest(b *testing.B) {
 	proxy, err := NewDelegationProxy(16 * 1024 * 1024)
 	if err != nil {
