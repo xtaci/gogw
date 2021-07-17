@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"strings"
 
 	"github.com/xtaci/aiohttp"
 )
@@ -14,12 +15,12 @@ var (
 )
 
 var (
-	delegatedURI map[string]string = map[string]string{
-		"/remote": "http://localhost:6060",
-	}
-
-	proxy *aiohttp.DelegationProxy
+	proxy       *aiohttp.DelegationProxy
+	proxyConfig *aiohttp.ProxyConfig
 )
+
+func delegatesResponse() {
+}
 
 func handler(ctx *aiohttp.AIOContext) error {
 	// parse URI
@@ -30,13 +31,12 @@ func handler(ctx *aiohttp.AIOContext) error {
 	}
 
 	// check if it's delegated URI
-	path := string(URI.Path())
-	if remote, ok := delegatedURI[path]; ok {
-		// TODO: delegates to proxy
-		//proxy.Delegate(
+	if remote, ok := proxyConfig.Match(&URI); ok {
 		_ = remote
+		//proxy.Delegate(remote,ctx.Header.Header(),
 		return nil
 	} else {
+		path := string(URI.Path())
 		// http route
 		switch path {
 		case "/":
@@ -56,6 +56,20 @@ func main() {
 	go func() {
 		log.Println(http.ListenAndServe(":6060", nil))
 	}()
+
+	testDelegates := `
+/debug/pprof
+127.0.0.1:6060
+`
+
+	var err error
+	reader := strings.NewReader(testDelegates)
+	proxyConfig, err = aiohttp.ParseProxyConfig(reader)
+	proxy, err = aiohttp.NewDelegationProxy(1024 * 1024)
+	if err != nil {
+		panic(err)
+	}
+	proxy.Start()
 
 	for i := 0; i < numServer; i++ {
 		server, err := aiohttp.NewServer(":8080", 256*1024*1024, handler, nil)

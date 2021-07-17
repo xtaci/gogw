@@ -341,6 +341,7 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOContext, conn net.Conn) error {
 	}
 
 	// call back handler
+	// TODO: how to handle proxy response
 	if err := proc.handler(ctx); err != nil {
 		return err
 	}
