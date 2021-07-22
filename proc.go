@@ -187,7 +187,9 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 				if ctx, ok := res.Context.(*AIOContext); ok {
 					if res.Operation == gaio.OpRead {
 						if res.Error == nil {
-							proc.processRequest(ctx, &res)
+							// read into buffer
+							ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
+							proc.processRequest(ctx)
 						} else {
 							proc.watcher.Free(res.Conn)
 						}
@@ -223,30 +225,45 @@ func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 }
 
 // process request
-func (proc *AsyncHttpProcessor) processRequest(ctx *AIOContext, res *gaio.OpResult) {
-	// read into buffer
-	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
-
+func (proc *AsyncHttpProcessor) processRequest(ctx *AIOContext) {
 	// process header or body
 	if ctx.protoState == stateHeader {
-		if err := proc.procHeader(ctx, res.Conn); err == nil {
-			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
+		if err := proc.procHeader(ctx, ctx.conn); err == nil {
+			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.headerDeadLine)
 		} else {
-			proc.watcher.Free(res.Conn)
+			proc.watcher.Free(ctx.conn)
 		}
 	} else if ctx.protoState == stateBody {
-		if err := proc.procBody(ctx, res.Conn); err == nil {
-			proc.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
+		if err := proc.procBody(ctx, ctx.conn); err == nil {
+			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.bodyDeadLine)
 		} else {
-			proc.watcher.Free(res.Conn)
+			proc.watcher.Free(ctx.conn)
 		}
 	} else if ctx.protoState == stateWS {
-		if err := proc.procWS(ctx, res.Conn); err == nil && ctx.WSMsg.Action != Close {
-			proc.watcher.Read(ctx, res.Conn, nil) //no need timeout for websocket, only few request
+		if err := proc.procWS(ctx, ctx.conn); err == nil && ctx.WSMsg.Action != Close {
+			proc.watcher.Read(ctx, ctx.conn, nil) //no need timeout for websocket, only few request
 		} else {
-			proc.watcher.Free(res.Conn)
+			proc.watcher.Free(ctx.conn)
 		}
 	}
+}
+
+// resume processing from proxy
+func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *ProxyContext) {
+	localCtx := proxyCtx.parentContext
+	if len(proxyCtx.proxyResponse) > 0 {
+		proc.watcher.Write(localCtx, localCtx.conn, proxyCtx.proxyResponse)
+	}
+
+	// resume state
+	localCtx.awaitProxy = false
+	localCtx.Header.Reset()
+	localCtx.nextCompare = 0
+	localCtx.expectedChar = 0
+
+	// proceed to next header processing
+	proc.processRequest(localCtx)
+	return
 }
 
 // process header fields
@@ -305,15 +322,15 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *AIOContext, conn net.Conn) error
 				ctx.Response.SetStatusCode(StatusBadRequest)
 				ctx.ResponseData = ctx.ResponseData[:0]
 				ctx.ResponseData = append(ctx.ResponseData, "websocket: too many request"...)
-				proc.writeHttpRspData(ctx, conn, true)
+				proc.WriteHttpRspData(ctx, conn, true)
 				return errUpgrade
 			}
 
 			if ctx.Response.StatusCode() == StatusOK {
-				proc.writeHttpRspData(ctx, conn, false) // special header, already done
+				proc.WriteHttpRspData(ctx, conn, false) // special header, already done
 				ctx.protoState = stateWS
 			} else {
-				proc.writeHttpRspData(ctx, conn, true)
+				proc.WriteHttpRspData(ctx, conn, true)
 			}
 
 			return nil
@@ -341,18 +358,27 @@ func (proc *AsyncHttpProcessor) procBody(ctx *AIOContext, conn net.Conn) error {
 	}
 
 	// call back handler
-	// TODO: how to handle proxy response
 	if err := proc.handler(ctx); err != nil {
 		return err
 	}
 
-	proc.writeHttpRspData(ctx, conn, true)
+	// discard buffer
+	if ctx.Header.ContentLength() > 0 {
+		ctx.buffer = ctx.buffer[ctx.Header.ContentLength():]
+	}
 
-	// toggle to process header
-	return proc.procHeader(ctx, conn)
+	// behavior based on resposne type
+	if !ctx.awaitProxy {
+		proc.WriteHttpRspData(ctx, conn, true)
+
+		// toggle to process header
+		return proc.procHeader(ctx, conn)
+	} else {
+		return nil
+	}
 }
 
-func (proc *AsyncHttpProcessor) writeHttpRspData(ctx *AIOContext, conn net.Conn, needHeader bool) {
+func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *AIOContext, conn net.Conn, needHeader bool) {
 
 	if needHeader {
 		// set required field
@@ -372,11 +398,6 @@ func (proc *AsyncHttpProcessor) writeHttpRspData(ctx *AIOContext, conn net.Conn,
 
 	// set state back to header
 	ctx.protoState = stateHeader
-
-	// discard buffer
-	if ctx.Header.ContentLength() > 0 {
-		ctx.buffer = ctx.buffer[ctx.Header.ContentLength():]
-	}
 
 	// a complete request has done
 	// reset timeouts

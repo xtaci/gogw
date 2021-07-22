@@ -19,8 +19,9 @@ var (
 	proxyConfig *aiohttp.ProxyConfig
 )
 
-func delegatesResponse() {
-}
+var (
+	asyncResponses chan []byte = make(chan []byte)
+)
 
 func handler(ctx *aiohttp.AIOContext) error {
 	// parse URI
@@ -32,8 +33,7 @@ func handler(ctx *aiohttp.AIOContext) error {
 
 	// check if it's delegated URI
 	if remote, ok := proxyConfig.Match(&URI); ok {
-		_ = remote
-		//proxy.Delegate(remote,ctx.Header.Header(),
+		proxy.Delegate(remote, ctx)
 		return nil
 	} else {
 		path := string(URI.Path())
@@ -49,6 +49,10 @@ func handler(ctx *aiohttp.AIOContext) error {
 	ctx.Response.SetStatusCode(404)
 	ctx.ResponseData = []byte("Not Found")
 	return errPath
+}
+
+func asyncResponseManager() {
+
 }
 
 func main() {
