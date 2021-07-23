@@ -35,22 +35,20 @@ type WSMessage struct {
 
 // ProxyContext defines the context for a single remote request
 type ProxyContext struct {
-	parentContext *AIOContext
+	parentContext *ClientContext
 
 	remoteAddr   string
 	protoState   int   // the state for reading
 	expectedChar uint8 // fast indexing for end of header
 	nextCompare  int
 
-	request       []byte // input request
 	proxyResponse []byte // proxy response
+	buffer        []byte // read buffer
 
 	// watcher's temp data
-	respHeaderSize int
-	respHeader     ResponseHeader
-	buffer         []byte
-	respBytes      []byte
-	err            error
+	respHeader ResponseHeader
+	respBytes  []byte // response data
+	err        error  // proxy error
 
 	// heap data references
 	connsHeap *weightedConnsHeap
@@ -61,8 +59,8 @@ type ProxyContext struct {
 	bodyDeadLine   time.Time
 }
 
-//  AIO Http context
-type AIOContext struct {
+//  Client Http context
+type ClientContext struct {
 	// mark waiting for proxy response
 	awaitProxy   bool
 	protoState   int   // the state for reading
@@ -70,11 +68,7 @@ type AIOContext struct {
 	nextCompare  int
 
 	// watcher's temp data
-	respHeaderSize int
-	respHeader     ResponseHeader
-	buffer         []byte
-	//respBytes      []byte
-	//	err            error
+	buffer []byte
 
 	// deadlines for reading, adjusted per request
 	headerDeadLine time.Time
@@ -88,8 +82,8 @@ type AIOContext struct {
 	// limiter for requests
 	limiter IRequestLimiter
 
-	proc      *AsyncHttpProcessor
-	conn      net.Conn
+	proc      *AsyncHttpProcessor // the processor it belongs to
+	conn      net.Conn            // client connection
 	WSMsg     WSMessage
 	wsHandler WSHandler
 }

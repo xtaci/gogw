@@ -97,7 +97,7 @@ var (
 	errPath = errors.New("incorrect path")
 )
 
-func home(ctx *AIOContext) error {
+func home(ctx *ClientContext) error {
 	if 0 == bytes.Compare(ctx.Header.requestURI, []byte("/")) || 0 == bytes.Compare(ctx.Header.requestURI, []byte("/index.html")) {
 		ctx.Response.SetStatusCode(StatusOK)
 		//ctx.ResponseData = []byte("Http home page")
@@ -109,7 +109,7 @@ func home(ctx *AIOContext) error {
 	return nil
 }
 
-func echo(ctx *AIOContext) error {
+func echo(ctx *ClientContext) error {
 	wsMSG := &ctx.WSMsg
 	wsMSG.RspData = append(wsMSG.RspData, wsMSG.ReqData...)
 	wsMSG.MessageType = TextMessage

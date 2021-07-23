@@ -92,7 +92,7 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 }
 
 // Delegate queues a request for sequential remote accessing
-func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *AIOContext) error {
+func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *ClientContext) error {
 	// create delegated request context
 	ctx.awaitProxy = true
 	proxyContext := new(ProxyContext)
@@ -304,14 +304,13 @@ func (proxy *DelegationProxy) procHeader(ctx *ProxyContext, conn net.Conn) error
 	ctx.nextCompare = len(ctx.buffer)
 
 	if headerOK {
-		var err error
-		ctx.respHeaderSize, err = ctx.respHeader.parse(ctx.buffer)
+		respHeaderSize, err := ctx.respHeader.parse(ctx.buffer)
 		if err != nil {
 			return err
 		}
 
 		// since header has parsed, remove header bytes now
-		ctx.buffer = ctx.buffer[ctx.respHeaderSize:]
+		ctx.buffer = ctx.buffer[respHeaderSize:]
 
 		// start to read body
 		ctx.protoState = stateBody
