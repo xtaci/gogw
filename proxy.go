@@ -63,8 +63,8 @@ type DelegationProxy struct {
 	headerTimeout time.Duration
 	bodyTimeout   time.Duration
 
-	chRequests    chan *ProxyContext
-	chIOCompleted chan *ProxyContext
+	chRequests    chan *RemoteContext
+	chIOCompleted chan *RemoteContext
 
 	maxConns int                           // maximum connections for a single URI
 	pool     map[string]*weightedConnsHeap // URI -> heap
@@ -85,18 +85,18 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 	proxy.bodyTimeout = defaultBodyTimeout
 	proxy.maxConns = defaultMaximumURIConnections
 	proxy.pool = make(map[string]*weightedConnsHeap)
-	proxy.chRequests = make(chan *ProxyContext)
-	proxy.chIOCompleted = make(chan *ProxyContext)
+	proxy.chRequests = make(chan *RemoteContext)
+	proxy.chIOCompleted = make(chan *RemoteContext)
 	proxy.die = make(chan struct{})
 	return proxy, nil
 }
 
 // Delegate queues a request for sequential remote accessing
-func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *ClientContext) error {
+func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *LocalContext) error {
 	// create delegated request context
-	ctx.awaitProxy = true
-	proxyContext := new(ProxyContext)
-	proxyContext.parentContext = ctx
+	ctx.awaitRemote = true
+	proxyContext := new(RemoteContext)
+	proxyContext.localContext = ctx
 	proxyContext.remoteAddr = remoteAddr
 	proxyContext.protoState = stateHeader
 	proxyContext.headerDeadLine = time.Now().Add(proxy.headerTimeout)
@@ -142,7 +142,7 @@ LOOP:
 				connsHeap, err = proxy.initConnsHeap(ctx.remoteAddr)
 				if err != nil {
 					ctx.proxyResponse = proxyErrResponse(err)
-					ctx.parentContext.proc.resumeFromProxy(ctx)
+					ctx.localContext.proc.resumeFromProxy(ctx)
 					continue LOOP
 				}
 				proxy.pool[ctx.remoteAddr] = connsHeap
@@ -155,7 +155,7 @@ LOOP:
 				conn, err := net.Dial("tcp", ctx.remoteAddr)
 				if err != nil {
 					ctx.proxyResponse = proxyErrResponse(err)
-					ctx.parentContext.proc.resumeFromProxy(ctx)
+					ctx.localContext.proc.resumeFromProxy(ctx)
 					continue LOOP
 				} else {
 					// replace heap top element
@@ -171,7 +171,7 @@ LOOP:
 			heap.Fix(connsHeap, wConn.idx) // heap fix
 
 			// move data downward from upper context
-			parentContext := ctx.parentContext
+			parentContext := ctx.localContext
 			contentLength := parentContext.Header.ContentLength()
 			if contentLength < 0 {
 				contentLength = 0
@@ -196,16 +196,16 @@ LOOP:
 			var bts []byte
 			if ctx.err != nil {
 				bts = proxyErrResponse(ctx.err)
-			} else if len(ctx.respBytes) > 0 {
+			} else if len(ctx.respData) > 0 {
 				var resp bytes.Buffer
 				resp.Write(ctx.respHeader.Header())
-				resp.Write(ctx.respBytes)
+				resp.Write(ctx.respData)
 				bts = resp.Bytes()
 			}
 
 			// send back response
 			ctx.proxyResponse = bts
-			ctx.parentContext.proc.resumeFromProxy(ctx)
+			ctx.localContext.proc.resumeFromProxy(ctx)
 		case <-proxy.die:
 			return
 		}
@@ -224,7 +224,7 @@ func (proxy *DelegationProxy) Start() {
 			}
 
 			for _, res := range results {
-				if ctx, ok := res.Context.(*ProxyContext); ok {
+				if ctx, ok := res.Context.(*RemoteContext); ok {
 					if res.Operation == gaio.OpRead {
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
@@ -251,7 +251,7 @@ func (proxy *DelegationProxy) Start() {
 }
 
 // process response
-func (proxy *DelegationProxy) processResponse(ctx *ProxyContext, res *gaio.OpResult) {
+func (proxy *DelegationProxy) processResponse(ctx *RemoteContext, res *gaio.OpResult) {
 	// read into buffer
 	var buf bytes.Buffer
 	buf.Write(res.Buffer[:res.Size])
@@ -281,14 +281,14 @@ PROC_AGAIN:
 			return
 		}
 
-		if ctx.err == nil && ctx.respBytes == nil {
+		if ctx.err == nil && ctx.respData == nil {
 			proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 		}
 	}
 }
 
 // process header fields
-func (proxy *DelegationProxy) procHeader(ctx *ProxyContext, conn net.Conn) error {
+func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, conn net.Conn) error {
 	var headerOK bool
 	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
 		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
@@ -323,7 +323,7 @@ func (proxy *DelegationProxy) procHeader(ctx *ProxyContext, conn net.Conn) error
 }
 
 // process body
-func (proxy *DelegationProxy) procBody(ctx *ProxyContext, conn net.Conn) error {
+func (proxy *DelegationProxy) procBody(ctx *RemoteContext, conn net.Conn) error {
 	contentLength := ctx.respHeader.ContentLength()
 	if contentLength == -1 {
 		// chunked data
@@ -343,21 +343,21 @@ func (proxy *DelegationProxy) procBody(ctx *ProxyContext, conn net.Conn) error {
 		ctx.nextCompare = len(ctx.buffer)
 
 		if dataOK {
-			ctx.respBytes = make([]byte, len(ctx.buffer))
-			copy(ctx.respBytes, ctx.buffer)
+			ctx.respData = make([]byte, len(ctx.buffer))
+			copy(ctx.respData, ctx.buffer)
 		}
 
 	} else if contentLength > 0 {
 		// read body data
 		if len(ctx.buffer) >= contentLength {
 			// notify request scheduler
-			ctx.respBytes = make([]byte, contentLength)
-			copy(ctx.respBytes, ctx.buffer)
+			ctx.respData = make([]byte, contentLength)
+			copy(ctx.respData, ctx.buffer)
 		}
 	}
 
 	// check if response is ready
-	if ctx.respBytes != nil {
+	if ctx.respData != nil {
 		select {
 		case proxy.chIOCompleted <- ctx:
 		case <-proxy.die:
@@ -368,7 +368,7 @@ func (proxy *DelegationProxy) procBody(ctx *ProxyContext, conn net.Conn) error {
 	return nil
 }
 
-func (proxy *DelegationProxy) notifySchedulerError(ctx *ProxyContext, err error) {
+func (proxy *DelegationProxy) notifySchedulerError(ctx *RemoteContext, err error) {
 	ctx.err = err
 
 	log.Println("notifySchedulerError:", err)

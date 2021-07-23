@@ -33,22 +33,22 @@ type WSMessage struct {
 	Action      int    //是否关闭连接
 }
 
-// ProxyContext defines the context for a single remote request
-type ProxyContext struct {
-	parentContext *ClientContext
+// RemoteContext defines the context for a single remote request
+type RemoteContext struct {
+	localContext *LocalContext
 
-	remoteAddr   string
-	protoState   int   // the state for reading
-	expectedChar uint8 // fast indexing for end of header
+	remoteAddr   string // remote service URI
+	protoState   int    // the state for reading
+	expectedChar uint8  // fast indexing for end of header
 	nextCompare  int
 
-	proxyResponse []byte // proxy response
-	buffer        []byte // read buffer
+	buffer []byte // proxy read buffer
 
-	// watcher's temp data
-	respHeader ResponseHeader
-	respBytes  []byte // response data
-	err        error  // proxy error
+	// remote response
+	respHeader    ResponseHeader
+	respData      []byte // response data
+	proxyResponse []byte // proxy response(header + data)
+	err           error  // proxy error
 
 	// heap data references
 	connsHeap *weightedConnsHeap
@@ -59,10 +59,10 @@ type ProxyContext struct {
 	bodyDeadLine   time.Time
 }
 
-//  Client Http context
-type ClientContext struct {
-	// mark waiting for proxy response
-	awaitProxy   bool
+//  Local http processing  context
+type LocalContext struct {
+	// mark waiting for remote response
+	awaitRemote  bool
 	protoState   int   // the state for reading
 	expectedChar uint8 // fast indexing for end of header
 	nextCompare  int
@@ -74,7 +74,7 @@ type ClientContext struct {
 	headerDeadLine time.Time
 	bodyDeadLine   time.Time
 
-	headerSize   int            // current  incoming requet's header size
+	headerSize   int            // current incoming requet's header size
 	Header       RequestHeader  // current incoming header content
 	Response     ResponseHeader // current outgoing response header
 	ResponseData []byte         // current outgoing response data
@@ -82,8 +82,9 @@ type ClientContext struct {
 	// limiter for requests
 	limiter IRequestLimiter
 
-	proc      *AsyncHttpProcessor // the processor it belongs to
-	conn      net.Conn            // client connection
+	proc *AsyncHttpProcessor // the processor it belongs to
+	conn net.Conn            // client connection
+
 	WSMsg     WSMessage
 	wsHandler WSHandler
 }

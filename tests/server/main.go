@@ -23,7 +23,7 @@ var (
 	asyncResponses chan []byte = make(chan []byte)
 )
 
-func handler(ctx *aiohttp.ClientContext) error {
+func handler(ctx *aiohttp.LocalContext) error {
 	// parse URI
 	var URI aiohttp.URI // current incoming request's URL
 	err := URI.Parse(nil, ctx.Header.RequestURI())

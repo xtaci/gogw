@@ -121,7 +121,7 @@ var (
 )
 
 // IRequestHandler interface is the function prototype for request handler
-type IRequestHandler func(*ClientContext) error
+type IRequestHandler func(*LocalContext) error
 
 // IRequestLimiter interface defines the function prototype for limiting request per second
 type IRequestLimiter interface {
@@ -163,7 +163,7 @@ func NewAsyncHttpProcessor(watcher *gaio.Watcher, handler IRequestHandler, limit
 
 // Add connection to this processor
 func (proc *AsyncHttpProcessor) AddConn(conn net.Conn) error {
-	ctx := new(ClientContext)
+	ctx := new(LocalContext)
 	ctx.proc = proc
 	ctx.conn = conn
 	ctx.limiter = proc.limiter // a shallow copy of limiter
@@ -184,7 +184,7 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 			}
 
 			for _, res := range results {
-				if ctx, ok := res.Context.(*ClientContext); ok {
+				if ctx, ok := res.Context.(*LocalContext); ok {
 					if res.Operation == gaio.OpRead {
 						if res.Error == nil {
 							// read into buffer
@@ -225,7 +225,7 @@ func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 }
 
 // process request
-func (proc *AsyncHttpProcessor) processRequest(ctx *ClientContext) {
+func (proc *AsyncHttpProcessor) processRequest(ctx *LocalContext) {
 	// process header or body
 	if ctx.protoState == stateHeader {
 		if err := proc.procHeader(ctx, ctx.conn); err == nil {
@@ -249,14 +249,14 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *ClientContext) {
 }
 
 // resume processing from proxy
-func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *ProxyContext) {
-	localCtx := proxyCtx.parentContext
+func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *RemoteContext) {
+	localCtx := proxyCtx.localContext
 	if len(proxyCtx.proxyResponse) > 0 {
 		proc.watcher.Write(localCtx, localCtx.conn, proxyCtx.proxyResponse)
 	}
 
 	// resume state
-	localCtx.awaitProxy = false
+	localCtx.awaitRemote = false
 	localCtx.Header.Reset()
 	localCtx.nextCompare = 0
 	localCtx.expectedChar = 0
@@ -267,7 +267,7 @@ func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *ProxyContext) {
 }
 
 // process header fields
-func (proc *AsyncHttpProcessor) procHeader(ctx *ClientContext, conn net.Conn) error {
+func (proc *AsyncHttpProcessor) procHeader(ctx *LocalContext, conn net.Conn) error {
 	var headerOK bool
 	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
 		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
@@ -351,7 +351,7 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *ClientContext, conn net.Conn) er
 }
 
 // process body
-func (proc *AsyncHttpProcessor) procBody(ctx *ClientContext, conn net.Conn) error {
+func (proc *AsyncHttpProcessor) procBody(ctx *LocalContext, conn net.Conn) error {
 	// read body data
 	if len(ctx.buffer) < ctx.Header.ContentLength() {
 		return nil
@@ -368,7 +368,7 @@ func (proc *AsyncHttpProcessor) procBody(ctx *ClientContext, conn net.Conn) erro
 	}
 
 	// behavior based on resposne type
-	if !ctx.awaitProxy {
+	if !ctx.awaitRemote {
 		proc.WriteHttpRspData(ctx, conn, true)
 
 		// toggle to process header
@@ -378,7 +378,7 @@ func (proc *AsyncHttpProcessor) procBody(ctx *ClientContext, conn net.Conn) erro
 	}
 }
 
-func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *ClientContext, conn net.Conn, needHeader bool) {
+func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *LocalContext, conn net.Conn, needHeader bool) {
 
 	if needHeader {
 		// set required field
@@ -411,7 +411,7 @@ func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *ClientContext, conn net.Co
 }
 
 // websocket
-type WSHandler func(*ClientContext) error
+type WSHandler func(*LocalContext) error
 
 type WSHandlerInfo struct {
 	mu      sync.RWMutex
@@ -444,11 +444,11 @@ func (wsi *WSHandlerInfo) HandleWSFunc(pattern string, handler WSHandler) {
 
 }
 
-func getWSHandler(ctx *ClientContext) WSHandler {
+func getWSHandler(ctx *LocalContext) WSHandler {
 	return wsHandlerInfo.GetWSHandler(ctx)
 }
 
-func (wsi *WSHandlerInfo) GetWSHandler(ctx *ClientContext) WSHandler {
+func (wsi *WSHandlerInfo) GetWSHandler(ctx *LocalContext) WSHandler {
 	wsi.mu.RLock()
 	defer wsi.mu.RUnlock()
 
@@ -472,7 +472,7 @@ func (wsi *WSHandlerInfo) GetWSHandler(ctx *ClientContext) WSHandler {
 	return h
 }
 
-func (proc *AsyncHttpProcessor) proUpgradeCheck(ctx *ClientContext) error {
+func (proc *AsyncHttpProcessor) proUpgradeCheck(ctx *LocalContext) error {
 	const badHandshake = "websocket: the client is not using the websocket protocol: "
 	ctx.Response.SetStatusCode(StatusOK)
 
@@ -541,7 +541,7 @@ func FormatCloseMessage(closeCode int, data []byte) []byte {
 
 func SetWSCloseHandler(h WSHandler) {
 	if h == nil {
-		h = func(ctx *ClientContext) error {
+		h = func(ctx *LocalContext) error {
 			message := FormatCloseMessage(ctx.WSMsg.CloseCode, nil)
 			ctx.WSMsg.RspData = append(ctx.WSMsg.RspData, message...)
 			return nil
@@ -553,7 +553,7 @@ func SetWSCloseHandler(h WSHandler) {
 
 func SetWSPingHandler(h WSHandler) {
 	if h == nil {
-		h = func(ctx *ClientContext) error {
+		h = func(ctx *LocalContext) error {
 			ctx.WSMsg.RspData = append(ctx.WSMsg.RspData, ctx.WSMsg.ReqData...)
 			return nil
 		}
@@ -743,7 +743,7 @@ func maskBytes(key [4]byte, pos int, b []byte) int {
 }
 
 // process websocket msg
-func (proc *AsyncHttpProcessor) procWS(ctx *ClientContext, conn net.Conn) error {
+func (proc *AsyncHttpProcessor) procWS(ctx *LocalContext, conn net.Conn) error {
 	data := ctx.buffer
 	for {
 		if ctx.WSMsg.RspHeader == nil {
@@ -811,7 +811,7 @@ func checkEnd(buf *[]byte, data []byte) {
 	}
 }
 
-func (proc *AsyncHttpProcessor) writeWSRspData(ctx *ClientContext, conn net.Conn, wsMsg *WSMessage) {
+func (proc *AsyncHttpProcessor) writeWSRspData(ctx *LocalContext, conn net.Conn, wsMsg *WSMessage) {
 
 	if len(wsMsg.RspData) == 0 {
 		return
@@ -859,7 +859,7 @@ const (
 	Shutdown     // Shutdown shutdowns the server.
 )
 
-func (ctx *ClientContext) handleWSControlFrame() {
+func (ctx *LocalContext) handleWSControlFrame() {
 	wsMsg := &ctx.WSMsg
 	switch wsMsg.MessageType {
 	case PingMessage:
