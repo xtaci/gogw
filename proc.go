@@ -228,13 +228,13 @@ func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 func (proc *AsyncHttpProcessor) processRequest(ctx *LocalContext) {
 	// process header or body
 	if ctx.protoState == stateHeader {
-		if err := proc.procHeader(ctx, ctx.conn); err == nil {
+		if err := proc.procHeader(ctx); err == nil {
 			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.headerDeadLine)
 		} else {
 			proc.watcher.Free(ctx.conn)
 		}
 	} else if ctx.protoState == stateBody {
-		if err := proc.procBody(ctx, ctx.conn); err == nil {
+		if err := proc.procBody(ctx); err == nil {
 			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.bodyDeadLine)
 		} else {
 			proc.watcher.Free(ctx.conn)
@@ -257,9 +257,6 @@ func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *RemoteContext) {
 
 	// resume state
 	localCtx.awaitRemote = false
-	localCtx.Header.Reset()
-	localCtx.nextCompare = 0
-	localCtx.expectedChar = 0
 
 	// proceed to next header processing
 	proc.processRequest(localCtx)
@@ -267,7 +264,7 @@ func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *RemoteContext) {
 }
 
 // process header fields
-func (proc *AsyncHttpProcessor) procHeader(ctx *LocalContext, conn net.Conn) error {
+func (proc *AsyncHttpProcessor) procHeader(ctx *LocalContext) error {
 	var headerOK bool
 	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
 		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
@@ -284,6 +281,7 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *LocalContext, conn net.Conn) err
 
 	if headerOK {
 		var err error
+		ctx.Header.Reset()
 		ctx.headerSize, err = ctx.Header.parse(ctx.buffer)
 		if err != nil {
 			//	log.Println(err)
@@ -322,15 +320,15 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *LocalContext, conn net.Conn) err
 				ctx.Response.SetStatusCode(StatusBadRequest)
 				ctx.ResponseData = ctx.ResponseData[:0]
 				ctx.ResponseData = append(ctx.ResponseData, "websocket: too many request"...)
-				proc.WriteHttpRspData(ctx, conn, true)
+				proc.WriteHttpRspData(ctx, true)
 				return errUpgrade
 			}
 
 			if ctx.Response.StatusCode() == StatusOK {
-				proc.WriteHttpRspData(ctx, conn, false) // special header, already done
+				proc.WriteHttpRspData(ctx, false) // special header, already done
 				ctx.protoState = stateWS
 			} else {
-				proc.WriteHttpRspData(ctx, conn, true)
+				proc.WriteHttpRspData(ctx, true)
 			}
 
 			return nil
@@ -340,7 +338,7 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *LocalContext, conn net.Conn) err
 		ctx.protoState = stateBody
 
 		// toggle to process header
-		return proc.procBody(ctx, conn)
+		return proc.procBody(ctx)
 	}
 
 	// restrict header size
@@ -351,7 +349,7 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *LocalContext, conn net.Conn) err
 }
 
 // process body
-func (proc *AsyncHttpProcessor) procBody(ctx *LocalContext, conn net.Conn) error {
+func (proc *AsyncHttpProcessor) procBody(ctx *LocalContext) error {
 	// read body data
 	if len(ctx.buffer) < ctx.Header.ContentLength() {
 		return nil
@@ -367,18 +365,23 @@ func (proc *AsyncHttpProcessor) procBody(ctx *LocalContext, conn net.Conn) error
 		ctx.buffer = ctx.buffer[ctx.Header.ContentLength():]
 	}
 
+	// set read state
+	ctx.protoState = stateHeader
+	ctx.nextCompare = 0
+	ctx.expectedChar = 0
+	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
+	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proc.bodyTimeout)
+
 	// behavior based on resposne type
 	if !ctx.awaitRemote {
-		proc.WriteHttpRspData(ctx, conn, true)
-
+		proc.WriteHttpRspData(ctx, true)
 		// toggle to process header
-		return proc.procHeader(ctx, conn)
-	} else {
-		return nil
+		return proc.procHeader(ctx)
 	}
+	return nil
 }
 
-func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *LocalContext, conn net.Conn, needHeader bool) {
+func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *LocalContext, needHeader bool) {
 
 	if needHeader {
 		// set required field
@@ -391,23 +394,10 @@ func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *LocalContext, conn net.Con
 		//}
 
 		// send back
-		proc.watcher.Write(ctx, conn, append(ctx.Response.Header(), ctx.ResponseData...))
+		proc.watcher.Write(ctx, ctx.conn, append(ctx.Response.Header(), ctx.ResponseData...))
 	} else {
-		proc.watcher.Write(ctx, conn, ctx.ResponseData)
+		proc.watcher.Write(ctx, ctx.conn, ctx.ResponseData)
 	}
-
-	// set state back to header
-	ctx.protoState = stateHeader
-
-	// a complete request has done
-	// reset timeouts
-	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
-	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proc.bodyTimeout)
-
-	// prepare header related data
-	ctx.Header.Reset()
-	ctx.nextCompare = 0
-	ctx.expectedChar = 0
 }
 
 // websocket
