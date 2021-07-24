@@ -66,8 +66,11 @@ type DelegationProxy struct {
 	chRequests    chan *RemoteContext
 	chIOCompleted chan *RemoteContext
 
-	maxConns int                           // maximum connections for a single URI
-	pool     map[string]*weightedConnsHeap // URI -> heap
+	// metrics
+	maxConns     int // maximum connections for a single URI
+	currentConns int // current connections
+
+	pool map[string]*weightedConnsHeap // URI -> heap
 }
 
 // NewDelegationProxy creates a proxy to remote service
@@ -92,11 +95,11 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 }
 
 // Delegate queues a request for sequential remote accessing
-func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *LocalContext) error {
+func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext) error {
 	// create delegated request context
 	ctx.awaitRemote = true
 	proxyContext := new(RemoteContext)
-	proxyContext.localContext = ctx
+	proxyContext.baseContext = ctx
 	proxyContext.remoteAddr = remoteAddr
 	proxyContext.protoState = stateHeader
 	proxyContext.headerDeadLine = time.Now().Add(proxy.headerTimeout)
@@ -126,6 +129,7 @@ func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConns
 	return h, nil
 }
 
+// schedules new requests
 func (proxy *DelegationProxy) requestScheduler() {
 LOOP:
 	for {
@@ -142,20 +146,21 @@ LOOP:
 				connsHeap, err = proxy.initConnsHeap(ctx.remoteAddr)
 				if err != nil {
 					ctx.proxyResponse = proxyErrResponse(err)
-					ctx.localContext.proc.resumeFromProxy(ctx)
+					ctx.baseContext.proc.resumeFromProxy(ctx)
 					continue LOOP
 				}
 				proxy.pool[ctx.remoteAddr] = connsHeap
+				proxy.currentConns = connsHeap.Len()
 			}
 
-			// load conn from heap
+			// get least loaded connection from heap
 			wConn := (*connsHeap)[0]
 			if atomic.LoadInt32(&wConn.disconnected) == 1 {
 				// re-connect if disconnected
 				conn, err := net.Dial("tcp", ctx.remoteAddr)
 				if err != nil {
 					ctx.proxyResponse = proxyErrResponse(err)
-					ctx.localContext.proc.resumeFromProxy(ctx)
+					ctx.baseContext.proc.resumeFromProxy(ctx)
 					continue LOOP
 				} else {
 					// replace heap top element
@@ -164,27 +169,31 @@ LOOP:
 				}
 			}
 
+			// TODO: add new connections if load is to too high
+			// BUG(xtaci): logarithmic based connection increasing?
+
 			// successfully loaded connection, bind some vars
 			ctx.wConn = wConn              // ref
 			ctx.connsHeap = connsHeap      // ref
 			wConn.load++                   // adjust weight
 			heap.Fix(connsHeap, wConn.idx) // heap fix
 
-			// move data downward from upper context
-			parentContext := ctx.localContext
-			contentLength := parentContext.Header.ContentLength()
+			// move data downward from base context
+			baseContext := ctx.baseContext
+
+			// BUG(xtaci): add processing to chunked data
+			contentLength := baseContext.Header.ContentLength()
 			if contentLength < 0 {
 				contentLength = 0
 			}
 
-			// marshal to binary
-			header := parentContext.Header.Header()
+			// re-marshal requests to raw binary
+			header := baseContext.Header.Header()
 			requests := make([]byte, len(header)+contentLength)
 			copy(requests, header)
-			copy(requests[len(parentContext.Header.RawHeaders()):], parentContext.buffer)
+			copy(requests[len(baseContext.Header.RawHeaders()):], baseContext.buffer)
 
-			//println(string(parentContext.Header.Header()))
-			//println(string(requests))
+			// submit to remote
 			proxy.watcher.Write(ctx, ctx.wConn.conn, requests)
 
 		case ctx := <-proxy.chIOCompleted:
@@ -205,7 +214,8 @@ LOOP:
 
 			// send back response
 			ctx.proxyResponse = bts
-			ctx.localContext.proc.resumeFromProxy(ctx)
+			ctx.baseContext.proc.resumeFromProxy(ctx)
+
 		case <-proxy.die:
 			return
 		}
@@ -316,7 +326,6 @@ func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, conn net.Conn) erro
 		ctx.protoState = stateBody
 		ctx.nextCompare = 0
 		ctx.expectedChar = 0
-
 	}
 
 	return nil
@@ -368,6 +377,7 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, conn net.Conn) error 
 	return nil
 }
 
+// link error
 func (proxy *DelegationProxy) notifySchedulerError(ctx *RemoteContext, err error) {
 	ctx.err = err
 

@@ -35,7 +35,7 @@ type WSMessage struct {
 
 // RemoteContext defines the context for a single remote request
 type RemoteContext struct {
-	localContext *LocalContext
+	baseContext *BaseContext
 
 	remoteAddr   string // remote service URI
 	protoState   int    // the state for reading
@@ -59,10 +59,13 @@ type RemoteContext struct {
 	bodyDeadLine   time.Time
 }
 
-//  Local http processing  context
-type LocalContext struct {
+//  Base http processing  context
+type BaseContext struct {
+	conn net.Conn // client connection
+
 	// mark waiting for remote response
-	awaitRemote  bool
+	awaitRemote bool // mark if request has trapped to proxy
+
 	protoState   int   // the state for reading
 	expectedChar uint8 // fast indexing for end of header
 	nextCompare  int
@@ -83,7 +86,6 @@ type LocalContext struct {
 	limiter IRequestLimiter
 
 	proc *AsyncHttpProcessor // the processor it belongs to
-	conn net.Conn            // client connection
 
 	WSMsg     WSMessage
 	wsHandler WSHandler
