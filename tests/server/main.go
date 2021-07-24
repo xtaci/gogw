@@ -19,10 +19,6 @@ var (
 	proxyConfig *aiohttp.ProxyConfig
 )
 
-var (
-	asyncResponses chan []byte = make(chan []byte)
-)
-
 func handler(ctx *aiohttp.LocalContext) error {
 	// parse URI
 	var URI aiohttp.URI // current incoming request's URL
@@ -49,10 +45,6 @@ func handler(ctx *aiohttp.LocalContext) error {
 	ctx.Response.SetStatusCode(404)
 	ctx.ResponseData = []byte("Not Found")
 	return errPath
-}
-
-func asyncResponseManager() {
-
 }
 
 func main() {
