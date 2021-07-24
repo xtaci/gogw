@@ -30,7 +30,6 @@ type WSMessage struct {
 	ReqData     []byte //已经完整解析后的请求业务数据
 	RspHeader   []byte
 	RspData     []byte //响应消息
-	Action      int    //是否关闭连接
 }
 
 // RemoteContext defines the context for a single remote request
@@ -87,6 +86,7 @@ type BaseContext struct {
 
 	proc *AsyncHttpProcessor // the processor it belongs to
 
+	Action    int // if close the connection
 	WSMsg     WSMessage
 	wsHandler WSHandler
 }

@@ -2004,7 +2004,7 @@ func (h *RequestHeader) parseHeaders(buf []byte) (int, error) {
 					continue
 				}
 				if caseInsensitiveCompare(s.key, strConnection) {
-					if caseInsensitiveContain(s.value, strClose) {
+					if !caseInsensitiveContain(s.value, strKeepAlive) {
 						h.connectionClose = true
 					} else {
 						h.connectionClose = false
