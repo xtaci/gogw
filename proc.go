@@ -247,7 +247,7 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *BaseContext) {
 		}
 	}
 
-	if ctx.Action == Close {
+	if ctx.ShouldClose == Close {
 		proc.watcher.Free(ctx.conn)
 	}
 }
@@ -397,7 +397,7 @@ func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *BaseContext, needHeader bo
 			ctx.Response.Set("Connection", "Keep-Alive")
 		} else {
 			ctx.Response.Set("Connection", "Close")
-			ctx.Action = Close
+			ctx.ShouldClose = Close
 		}
 
 		//if len(ctx.Response.contentType) == 0{
@@ -786,7 +786,7 @@ func (proc *AsyncHttpProcessor) procWS(ctx *BaseContext, conn net.Conn) error {
 
 		data = leftover
 
-		if ctx.Action == Close {
+		if ctx.ShouldClose == Close {
 			break
 		}
 
@@ -870,7 +870,7 @@ func (ctx *BaseContext) handleWSControlFrame() {
 			wsMsg.CloseCode = int(binary.BigEndian.Uint16(wsMsg.ReqData))
 		}
 		_ = wsCloseHandler(ctx)
-		ctx.Action = Close
+		ctx.ShouldClose = Close
 	}
 	return
 }

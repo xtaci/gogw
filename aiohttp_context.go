@@ -86,7 +86,8 @@ type BaseContext struct {
 
 	proc *AsyncHttpProcessor // the processor it belongs to
 
-	Action    int // if close the connection
+	ShouldClose int // mark if server should close the connection
+
 	WSMsg     WSMessage
 	wsHandler WSHandler
 }
