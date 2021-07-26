@@ -53,6 +53,10 @@ func handler(ctx *aiohttp.BaseContext) error {
 }
 
 func main() {
+
+	for k := 0; k < len(dummyData); k++ {
+		dummyData[k] = 'A'
+	}
 	const numServer = 4
 	go func() {
 		log.Println(http.ListenAndServe(":6060", nil))
