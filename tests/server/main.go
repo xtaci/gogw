@@ -19,6 +19,10 @@ var (
 	proxyConfig *aiohttp.ProxyConfig
 )
 
+var (
+	dummyData = make([]byte, 32768)
+)
+
 func handler(ctx *aiohttp.BaseContext) error {
 	// parse URI
 	var URI aiohttp.URI // current incoming request's URL
@@ -37,7 +41,8 @@ func handler(ctx *aiohttp.BaseContext) error {
 		switch path {
 		case "/":
 			ctx.Response.SetStatusCode(200)
-			ctx.ResponseData = []byte("AIOHTTP")
+			//ctx.ResponseData = []byte("AIOHTTP")
+			ctx.ResponseData = dummyData
 		}
 		return nil
 	}

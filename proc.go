@@ -279,6 +279,11 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *BaseContext) error {
 	}
 	ctx.nextCompare = len(ctx.buffer)
 
+	// restrict header size
+	if len(ctx.buffer) > proc.maximumHeaderSize {
+		return ErrRequestHeaderSize
+	}
+
 	if headerOK {
 		var err error
 		ctx.Header.Reset()
@@ -341,10 +346,6 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *BaseContext) error {
 		return proc.procBody(ctx)
 	}
 
-	// restrict header size
-	if len(ctx.buffer) > proc.maximumHeaderSize {
-		return ErrRequestHeaderSize
-	}
 	return nil
 }
 
