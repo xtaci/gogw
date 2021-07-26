@@ -228,23 +228,27 @@ func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 func (proc *AsyncHttpProcessor) processRequest(ctx *BaseContext) {
 	// process header or body
 	if ctx.protoState == stateHeader {
-		if err := proc.procHeader(ctx); err != nil || ctx.Action == Close {
+		if err := proc.procHeader(ctx); err != nil {
 			proc.watcher.Free(ctx.conn)
 		} else {
 			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.headerDeadLine)
 		}
 	} else if ctx.protoState == stateBody {
-		if err := proc.procBody(ctx); err == nil || ctx.Action == Close {
+		if err := proc.procBody(ctx); err != nil {
 			proc.watcher.Free(ctx.conn)
 		} else {
 			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.bodyDeadLine)
 		}
 	} else if ctx.protoState == stateWS {
-		if err := proc.procWS(ctx, ctx.conn); err != nil || ctx.Action == Close {
+		if err := proc.procWS(ctx, ctx.conn); err != nil {
 			proc.watcher.Free(ctx.conn)
 		} else {
 			proc.watcher.Read(ctx, ctx.conn, nil) //no need timeout for websocket, only few request
 		}
+	}
+
+	if ctx.Action == Close {
+		proc.watcher.Free(ctx.conn)
 	}
 }
 
@@ -389,11 +393,11 @@ func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *BaseContext, needHeader bo
 		if ctx.ResponseData != nil {
 			ctx.Response.SetContentLength(len(ctx.ResponseData))
 		}
-		if ctx.Header.ConnectionClose() {
+		if !ctx.Header.ConnectionClose() {
+			ctx.Response.Set("Connection", "Keep-Alive")
+		} else {
 			ctx.Response.Set("Connection", "Close")
 			ctx.Action = Close
-		} else {
-			ctx.Response.Set("Connection", "Keep-Alive")
 		}
 
 		//if len(ctx.Response.contentType) == 0{
