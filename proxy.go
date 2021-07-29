@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"io"
 	"log"
+	"math"
 	"net"
 	"sync/atomic"
 	"time"
@@ -46,7 +47,8 @@ func (h *weightedConnsHeap) Pop() interface{} {
 }
 
 const (
-	defaultMaximumURIConnections = 16
+	defaultMaximumURIConnections = 128
+	defaultInitialURIConnections = 1
 )
 
 // Delegation Proxy delegates a special conn to remote,
@@ -68,7 +70,7 @@ type DelegationProxy struct {
 
 	// metrics
 	maxConns     int // maximum connections for a single URI
-	currentConns int // current connections
+	initialConns int // initial connections
 
 	pool map[string]*weightedConnsHeap // URI -> heap
 }
@@ -87,6 +89,7 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 	proxy.headerTimeout = defaultHeaderTimeout
 	proxy.bodyTimeout = defaultBodyTimeout
 	proxy.maxConns = defaultMaximumURIConnections
+	proxy.initialConns = defaultInitialURIConnections
 	proxy.pool = make(map[string]*weightedConnsHeap)
 	proxy.chRequests = make(chan *RemoteContext)
 	proxy.chIOCompleted = make(chan *RemoteContext)
@@ -116,7 +119,7 @@ func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext) erro
 func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConnsHeap, err error) {
 	h = new(weightedConnsHeap)
 
-	for i := 0; i < proxy.maxConns; i++ {
+	for i := 0; i < proxy.initialConns; i++ {
 		conn, err := net.Dial("tcp", remoteAddr)
 		if err != nil {
 			return nil, err
@@ -150,7 +153,6 @@ LOOP:
 					continue LOOP
 				}
 				proxy.pool[ctx.remoteAddr] = connsHeap
-				proxy.currentConns = connsHeap.Len()
 			}
 
 			// get least loaded connection from heap
@@ -169,8 +171,16 @@ LOOP:
 				}
 			}
 
-			// TODO: add new connections if load is to too high
-			// BUG(xtaci): logarithmic based connection increasing?
+			//  add new connections if load is to too high logarithmicly
+			if connsHeap.Len() < proxy.maxConns && math.Log(float64(wConn.load+1)) > math.Log(float64(wConn.load)) {
+				conn, err := net.Dial("tcp", ctx.remoteAddr)
+				if err == nil {
+					wConn = &weightedConn{conn: conn, load: 0, idx: 0}
+					heap.Push(connsHeap, wConn)
+				}
+
+				//log.Println("scale", connsHeap.Len())
+			}
 
 			// successfully loaded connection, bind some vars
 			ctx.wConn = wConn              // ref
