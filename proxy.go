@@ -46,9 +46,15 @@ func (h *weightedConnsHeap) Pop() interface{} {
 	return x
 }
 
+func (h *weightedConnsHeap) totalLoad() (totalLoad uint32) {
+	for k := range *h {
+		totalLoad += (*h)[k].load
+	}
+	return totalLoad
+}
+
 const (
 	defaultMaximumURIConnections = 128
-	defaultInitialURIConnections = 1
 )
 
 // Delegation Proxy delegates a special conn to remote,
@@ -69,8 +75,7 @@ type DelegationProxy struct {
 	chIOCompleted chan *RemoteContext
 
 	// metrics
-	maxConns     int // maximum connections for a single URI
-	initialConns int // initial connections
+	maxConns int // maximum connections for a single URI
 
 	pool map[string]*weightedConnsHeap // URI -> heap
 }
@@ -89,7 +94,6 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 	proxy.headerTimeout = defaultHeaderTimeout
 	proxy.bodyTimeout = defaultBodyTimeout
 	proxy.maxConns = defaultMaximumURIConnections
-	proxy.initialConns = defaultInitialURIConnections
 	proxy.pool = make(map[string]*weightedConnsHeap)
 	proxy.chRequests = make(chan *RemoteContext)
 	proxy.chIOCompleted = make(chan *RemoteContext)
@@ -116,22 +120,6 @@ func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext) erro
 	return nil
 }
 
-func (proxy *DelegationProxy) initConnsHeap(remoteAddr string) (h *weightedConnsHeap, err error) {
-	h = new(weightedConnsHeap)
-
-	for i := 0; i < proxy.initialConns; i++ {
-		conn, err := net.Dial("tcp", remoteAddr)
-		if err != nil {
-			return nil, err
-		}
-
-		wConn := &weightedConn{conn: conn, load: 0}
-		heap.Push(h, wConn)
-	}
-
-	return h, nil
-}
-
 // schedules new requests
 func (proxy *DelegationProxy) requestScheduler() {
 LOOP:
@@ -140,19 +128,23 @@ LOOP:
 		case ctx := <-proxy.chRequests:
 			var connsHeap *weightedConnsHeap
 			var exists bool
-			var err error
 
 			// create if not initialized
 			connsHeap, exists = proxy.pool[ctx.remoteAddr]
 			if !exists {
-				// create conn
-				connsHeap, err = proxy.initConnsHeap(ctx.remoteAddr)
-				if err != nil {
-					ctx.proxyResponse = proxyErrResponse(err)
-					ctx.baseContext.proc.resumeFromProxy(ctx)
-					continue LOOP
-				}
+				connsHeap = new(weightedConnsHeap)
 				proxy.pool[ctx.remoteAddr] = connsHeap
+			}
+
+			// add new connections if load is to too high
+			// scale up logarithmicly
+			if connsHeap.Len() < proxy.maxConns && (connsHeap.Len() == 0 || int(math.Log(float64(connsHeap.totalLoad()+1))) > connsHeap.Len()) {
+				conn, err := net.Dial("tcp", ctx.remoteAddr)
+				if err == nil {
+					newConn := &weightedConn{conn: conn, load: 0, idx: 0}
+					heap.Push(connsHeap, newConn)
+				}
+				log.Println("scale", connsHeap.Len())
 			}
 
 			// get least loaded connection from heap
@@ -169,17 +161,6 @@ LOOP:
 					wConn = &weightedConn{conn: conn, load: 0, idx: 0}
 					(*connsHeap)[0] = wConn
 				}
-			}
-
-			//  add new connections if load is to too high logarithmicly
-			if connsHeap.Len() < proxy.maxConns && math.Log(float64(wConn.load+1)) > math.Log(float64(wConn.load)) {
-				conn, err := net.Dial("tcp", ctx.remoteAddr)
-				if err == nil {
-					wConn = &weightedConn{conn: conn, load: 0, idx: 0}
-					heap.Push(connsHeap, wConn)
-				}
-
-				//log.Println("scale", connsHeap.Len())
 			}
 
 			// successfully loaded connection, bind some vars
@@ -210,6 +191,16 @@ LOOP:
 			// once the request completed, we reduce the load of the connection
 			ctx.wConn.load--
 			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
+
+			// scale-down
+			//log.Println("totalload", ctx.connsHeap.totalLoad())
+			if ctx.connsHeap.Len() > 1 && ctx.wConn.load == 0 {
+				if int(math.Log(float64(ctx.connsHeap.totalLoad()))) < ctx.connsHeap.Len() {
+					heap.Remove(ctx.connsHeap, ctx.wConn.idx)
+					proxy.watcher.Free(ctx.wConn.conn)
+					log.Println("scale down")
+				}
+			}
 
 			// check error
 			var bts []byte
