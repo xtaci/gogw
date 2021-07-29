@@ -231,12 +231,14 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *BaseContext) {
 		if err := proc.procHeader(ctx); err != nil {
 			proc.watcher.Free(ctx.conn)
 		} else {
+			ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
 			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.headerDeadLine)
 		}
 	} else if ctx.protoState == stateBody {
 		if err := proc.procBody(ctx); err != nil {
 			proc.watcher.Free(ctx.conn)
 		} else {
+			ctx.bodyDeadLine = time.Now().Add(proc.bodyTimeout)
 			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.bodyDeadLine)
 		}
 	} else if ctx.protoState == stateWS {
@@ -261,9 +263,9 @@ func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *RemoteContext) {
 
 	// resume state
 	localCtx.awaitRemote = false
-
 	// proceed to next header processing
 	proc.processRequest(localCtx)
+
 	return
 }
 
@@ -374,8 +376,6 @@ func (proc *AsyncHttpProcessor) procBody(ctx *BaseContext) error {
 	ctx.protoState = stateHeader
 	ctx.nextCompare = 0
 	ctx.expectedChar = 0
-	ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
-	ctx.bodyDeadLine = ctx.headerDeadLine.Add(proc.bodyTimeout)
 
 	// behavior based on resposne type
 	if !ctx.awaitRemote {

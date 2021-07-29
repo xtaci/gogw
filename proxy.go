@@ -109,8 +109,6 @@ func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext) erro
 	proxyContext.baseContext = ctx
 	proxyContext.remoteAddr = remoteAddr
 	proxyContext.protoState = stateHeader
-	proxyContext.headerDeadLine = time.Now().Add(proxy.headerTimeout)
-	proxyContext.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
 
 	select {
 	case proxy.chRequests <- proxyContext:
@@ -193,12 +191,12 @@ LOOP:
 			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
 
 			// scale-down
-			//log.Println("totalload", ctx.connsHeap.totalLoad())
+			log.Println("totalload", ctx.connsHeap.totalLoad())
 			if ctx.connsHeap.Len() > 1 && ctx.wConn.load == 0 {
 				if int(math.Log(float64(ctx.connsHeap.totalLoad()))) < ctx.connsHeap.Len() {
 					heap.Remove(ctx.connsHeap, ctx.wConn.idx)
 					proxy.watcher.Free(ctx.wConn.conn)
-					log.Println("scale down")
+					//log.Println("scale down", ctx.wConn.load)
 				}
 			}
 
@@ -252,6 +250,8 @@ func (proxy *DelegationProxy) Start() {
 						} else {
 							// if request writing to remote has completed successfully
 							// initate response reading
+							ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
+							ctx.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
 							proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 						}
 					}
