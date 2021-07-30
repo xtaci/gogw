@@ -16,6 +16,7 @@ import (
 type weightedConn struct {
 	idx          int
 	conn         net.Conn
+	buffer       []byte // connection bounded buffer
 	load         uint32 // connection load
 	disconnected int32  // atomic flag to mark whether the connection has disconnected
 }
@@ -179,6 +180,7 @@ LOOP:
 			// re-marshal requests to raw binary
 			header := baseContext.Header.Header()
 			requests := make([]byte, len(header)+contentLength)
+
 			copy(requests, header)
 			copy(requests[len(baseContext.Header.RawHeaders()):], baseContext.buffer)
 
@@ -191,7 +193,7 @@ LOOP:
 			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
 
 			// scale-down
-			log.Println("totalload", ctx.connsHeap.totalLoad())
+			//log.Println("totalload", ctx.connsHeap.totalLoad())
 			if ctx.connsHeap.Len() > 1 && ctx.wConn.load == 0 {
 				if int(math.Log(float64(ctx.connsHeap.totalLoad()))) < ctx.connsHeap.Len() {
 					heap.Remove(ctx.connsHeap, ctx.wConn.idx)
@@ -224,6 +226,8 @@ LOOP:
 func (proxy *DelegationProxy) Start() {
 	go proxy.requestScheduler()
 
+	var count int
+	var readSubmit int
 	go func() {
 		for {
 			results, err := proxy.watcher.WaitIO()
@@ -235,11 +239,13 @@ func (proxy *DelegationProxy) Start() {
 			for _, res := range results {
 				if ctx, ok := res.Context.(*RemoteContext); ok {
 					if res.Operation == gaio.OpRead {
+						count++
 						if res.Error != nil {
 							proxy.watcher.Free(res.Conn)
 							proxy.notifySchedulerError(ctx, res.Error)
 							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 						} else {
+							log.Println("resp:", count)
 							proxy.processResponse(ctx, &res)
 						}
 					} else if res.Operation == gaio.OpWrite {
@@ -253,6 +259,8 @@ func (proxy *DelegationProxy) Start() {
 							ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
 							ctx.bodyDeadLine = ctx.headerDeadLine.Add(proxy.bodyTimeout)
 							proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
+							readSubmit++
+							log.Println("read:", readSubmit)
 						}
 					}
 				}
@@ -263,10 +271,7 @@ func (proxy *DelegationProxy) Start() {
 
 // process response
 func (proxy *DelegationProxy) processResponse(ctx *RemoteContext, res *gaio.OpResult) {
-	// read into buffer
-	var buf bytes.Buffer
-	buf.Write(res.Buffer[:res.Size])
-	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
+	ctx.wConn.buffer = append(ctx.wConn.buffer, res.Buffer[:res.Size]...)
 
 	// process header or body
 PROC_AGAIN:
@@ -301,8 +306,8 @@ PROC_AGAIN:
 // process header fields
 func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, conn net.Conn) error {
 	var headerOK bool
-	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
-		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
+	for i := ctx.nextCompare; i < len(ctx.wConn.buffer); i++ {
+		if ctx.wConn.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
 			ctx.expectedChar++
 			if ctx.expectedChar == uint8(len(HeaderEndFlag)) {
 				headerOK = true
@@ -312,16 +317,16 @@ func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, conn net.Conn) erro
 			ctx.expectedChar = 0
 		}
 	}
-	ctx.nextCompare = len(ctx.buffer)
+	ctx.nextCompare = len(ctx.wConn.buffer)
 
 	if headerOK {
-		respHeaderSize, err := ctx.respHeader.parse(ctx.buffer)
+		respHeaderSize, err := ctx.respHeader.parse(ctx.wConn.buffer)
 		if err != nil {
 			return err
 		}
 
 		// since header has parsed, remove header bytes now
-		ctx.buffer = ctx.buffer[respHeaderSize:]
+		ctx.wConn.buffer = ctx.wConn.buffer[respHeaderSize:]
 
 		// start to read body
 		ctx.protoState = stateBody
@@ -339,8 +344,8 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, conn net.Conn) error 
 		// chunked data
 		// read until \r\n\r\n
 		var dataOK bool
-		for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
-			if ctx.buffer[i] == ChunkDataEndFlag[ctx.expectedChar] {
+		for i := ctx.nextCompare; i < len(ctx.wConn.buffer); i++ {
+			if ctx.wConn.buffer[i] == ChunkDataEndFlag[ctx.expectedChar] {
 				ctx.expectedChar++
 				if ctx.expectedChar == uint8(len(ChunkDataEndFlag)) {
 					dataOK = true
@@ -350,20 +355,23 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, conn net.Conn) error 
 				ctx.expectedChar = 0
 			}
 		}
-		ctx.nextCompare = len(ctx.buffer)
+		ctx.nextCompare = len(ctx.wConn.buffer)
 
 		if dataOK {
-			ctx.respData = make([]byte, len(ctx.buffer))
-			copy(ctx.respData, ctx.buffer)
+			ctx.respData = make([]byte, len(ctx.wConn.buffer))
+			copy(ctx.respData, ctx.wConn.buffer)
 		}
 
 	} else if contentLength > 0 {
 		// read body data
-		if len(ctx.buffer) >= contentLength {
+		if len(ctx.wConn.buffer) >= contentLength {
 			// notify request scheduler
 			ctx.respData = make([]byte, contentLength)
-			copy(ctx.respData, ctx.buffer)
+			copy(ctx.respData, ctx.wConn.buffer)
 		}
+
+		// discard content
+		ctx.wConn.buffer = ctx.wConn.buffer[contentLength:]
 	}
 
 	// check if response is ready

@@ -41,8 +41,6 @@ type RemoteContext struct {
 	expectedChar uint8  // fast indexing for end of header
 	nextCompare  int
 
-	buffer []byte // proxy read buffer
-
 	// remote response
 	respHeader    ResponseHeader
 	respData      []byte // response data
