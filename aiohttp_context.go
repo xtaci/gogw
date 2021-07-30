@@ -36,10 +36,14 @@ type WSMessage struct {
 type RemoteContext struct {
 	baseContext *BaseContext
 
+	request      []byte
 	remoteAddr   string // remote service URI
 	protoState   int    // the state for reading
 	expectedChar uint8  // fast indexing for end of header
 	nextCompare  int
+
+	// watcher's temp data
+	buffer []byte
 
 	// remote response
 	respHeader    ResponseHeader

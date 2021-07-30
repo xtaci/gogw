@@ -142,6 +142,9 @@ type AsyncHttpProcessor struct {
 	// buffer limits
 	maximumHeaderSize int
 	maximumBodySize   int
+
+	// resume signal
+	chResume chan *BaseContext
 }
 
 // Create processor context
@@ -149,6 +152,7 @@ func NewAsyncHttpProcessor(watcher *gaio.Watcher, handler IRequestHandler, limit
 	proc := new(AsyncHttpProcessor)
 	proc.watcher = watcher
 	proc.die = make(chan struct{})
+	proc.chResume = make(chan *BaseContext)
 	proc.handler = handler
 	proc.limiter = limiter
 
@@ -174,6 +178,8 @@ func (proc *AsyncHttpProcessor) AddConn(conn net.Conn) error {
 
 // Processor loop
 func (proc *AsyncHttpProcessor) StartProcessor() {
+	chResults := make(chan []gaio.OpResult)
+
 	go func() {
 		for {
 			// loop wait for any IO events
@@ -183,22 +189,40 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 				return
 			}
 
-			for _, res := range results {
-				if ctx, ok := res.Context.(*BaseContext); ok {
-					if res.Operation == gaio.OpRead {
-						if res.Error == nil {
-							// read into buffer
-							ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
-							proc.processRequest(ctx)
-						} else {
-							proc.watcher.Free(res.Conn)
-						}
-					} else if res.Operation == gaio.OpWrite {
-						if res.Error != nil {
-							proc.watcher.Free(res.Conn)
+			select {
+			case chResults <- results:
+			case <-proc.die:
+				return
+			}
+		}
+	}()
+
+	// agent for channeling
+	go func() {
+		for {
+			select {
+			case resumeContext := <-proc.chResume:
+				proc.processRequest(resumeContext)
+			case results := <-chResults:
+				for _, res := range results {
+					if ctx, ok := res.Context.(*BaseContext); ok {
+						if res.Operation == gaio.OpRead {
+							if res.Error == nil {
+								// read into buffer
+								ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
+								proc.processRequest(ctx)
+							} else {
+								proc.watcher.Free(res.Conn)
+							}
+						} else if res.Operation == gaio.OpWrite {
+							if res.Error != nil {
+								proc.watcher.Free(res.Conn)
+							}
 						}
 					}
 				}
+			case <-proc.die:
+				return
 			}
 		}
 	}()
@@ -226,20 +250,15 @@ func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 
 // process request
 func (proc *AsyncHttpProcessor) processRequest(ctx *BaseContext) {
+	ctx.awaitRemote = false
 	// process header or body
 	if ctx.protoState == stateHeader {
 		if err := proc.procHeader(ctx); err != nil {
 			proc.watcher.Free(ctx.conn)
-		} else {
-			ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
-			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.headerDeadLine)
 		}
 	} else if ctx.protoState == stateBody {
 		if err := proc.procBody(ctx); err != nil {
 			proc.watcher.Free(ctx.conn)
-		} else {
-			ctx.bodyDeadLine = time.Now().Add(proc.bodyTimeout)
-			proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.bodyDeadLine)
 		}
 	} else if ctx.protoState == stateWS {
 		if err := proc.procWS(ctx, ctx.conn); err != nil {
@@ -261,10 +280,11 @@ func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *RemoteContext) {
 		proc.watcher.Write(localCtx, localCtx.conn, proxyCtx.proxyResponse)
 	}
 
-	// resume state
-	localCtx.awaitRemote = false
-	// proceed to next header processing
-	proc.processRequest(localCtx)
+	// resume state and normal processing
+	select {
+	case proc.chResume <- localCtx:
+	case <-proc.die:
+	}
 
 	return
 }
@@ -350,6 +370,8 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *BaseContext) error {
 
 		// toggle to process header
 		return proc.procBody(ctx)
+	} else {
+		proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.headerDeadLine)
 	}
 
 	return nil
@@ -359,6 +381,8 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *BaseContext) error {
 func (proc *AsyncHttpProcessor) procBody(ctx *BaseContext) error {
 	// read body data
 	if len(ctx.buffer) < ctx.Header.ContentLength() {
+		// submit again
+		proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.bodyDeadLine)
 		return nil
 	}
 
