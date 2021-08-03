@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -70,6 +71,7 @@ const (
 //
 //
 type DelegationProxy struct {
+	dieOnce       sync.Once
 	die           chan struct{}
 	watcher       *gaio.Watcher
 	headerTimeout time.Duration
@@ -120,6 +122,12 @@ func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext) erro
 		return io.EOF
 	}
 	return nil
+}
+
+func (proxy *DelegationProxy) Close() {
+	proxy.dieOnce.Do(func() {
+		close(proxy.die)
+	})
 }
 
 // schedules new requests
@@ -231,7 +239,20 @@ LOOP:
 			// submit new request
 			if ctx.wConn.requestList.Len() > 0 {
 				nextContext := ctx.wConn.requestList.Front().Value.(*RemoteContext)
-				proxy.watcher.Write(nextContext, nextContext.wConn.conn, nextContext.request)
+
+				// check if ctx has a related dead connection
+				if atomic.LoadInt32(&nextContext.wConn.disconnected) == 0 {
+					proxy.watcher.Write(nextContext, nextContext.wConn.conn, nextContext.request)
+				} else {
+					// re-submit the request to re-queue
+					go func() {
+						select {
+						case proxy.chRequests <- nextContext:
+						case <-proxy.die:
+						}
+					}()
+				}
+
 			} else {
 				ctx.wConn.inprog = false
 				log.Println("inprog false")
@@ -377,6 +398,7 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 			ctx.respData = make([]byte, contentLength)
 			copy(ctx.respData, ctx.buffer)
 		}
+
 	} else if res.Error == io.EOF { // remote actively terminates
 		ctx.respData = make([]byte, len(ctx.buffer))
 		copy(ctx.respData, ctx.buffer)
