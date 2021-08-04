@@ -200,7 +200,6 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 	// the only request, submit immediately
 	if ctx.wConn.requestList.Len() == 1 {
 		if err := proxy.watcher.Write(ctx, ctx.wConn.conn, requests); err != nil {
-			log.Println("watcher.Write", err)
 			go proxy.notifySchedulerError(ctx, err)
 		}
 		//proxy.directwrite++
@@ -421,8 +420,11 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 		}
 
 	} else if res.Error != nil { // remote actively terminates
-		ctx.respData = make([]byte, len(ctx.buffer))
-		copy(ctx.respData, ctx.buffer)
+		if res.Error == io.EOF {
+			// handling of connection:close
+			ctx.respData = make([]byte, len(ctx.buffer))
+			copy(ctx.respData, ctx.buffer)
+		}
 		ctx.wConn.disconnected = true
 	}
 
