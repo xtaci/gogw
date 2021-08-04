@@ -77,8 +77,11 @@ type DelegationProxy struct {
 	headerTimeout time.Duration
 	bodyTimeout   time.Duration
 
-	chRequests    chan *RemoteContext
-	chIOCompleted chan *RemoteContext
+	newRequests   []*RemoteContext
+	newRequestsMu sync.Mutex
+
+	chNotifyNewRequests chan struct{}
+	chIOCompleted       chan *RemoteContext
 
 	// metrics
 	maxConns int // maximum connections for a single URI
@@ -101,7 +104,7 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 	proxy.bodyTimeout = defaultBodyTimeout
 	proxy.maxConns = defaultMaximumURIConnections
 	proxy.pool = make(map[string]*weightedConnsHeap)
-	proxy.chRequests = make(chan *RemoteContext)
+	proxy.chNotifyNewRequests = make(chan struct{}, 1)
 	proxy.chIOCompleted = make(chan *RemoteContext)
 	proxy.die = make(chan struct{})
 	return proxy, nil
@@ -116,10 +119,13 @@ func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext) erro
 	proxyContext.remoteAddr = remoteAddr
 	proxyContext.protoState = stateHeader
 
+	proxy.newRequestsMu.Lock()
+	proxy.newRequests = append(proxy.newRequests, proxyContext)
+	proxy.newRequestsMu.Unlock()
+
 	select {
-	case proxy.chRequests <- proxyContext:
-	case <-proxy.die:
-		return io.EOF
+	case proxy.chNotifyNewRequests <- struct{}{}:
+	default:
 	}
 	return nil
 }
@@ -130,79 +136,93 @@ func (proxy *DelegationProxy) Close() {
 	})
 }
 
-// schedules new requests
+// sched a new request
+func (proxy *DelegationProxy) sched(ctx *RemoteContext, prepend bool) {
+	var connsHeap *weightedConnsHeap
+	var exists bool
+
+	// create if not initialized
+	connsHeap, exists = proxy.pool[ctx.remoteAddr]
+	if !exists {
+		connsHeap = new(weightedConnsHeap)
+		proxy.pool[ctx.remoteAddr] = connsHeap
+	}
+
+	// add new connections if load is to too high
+	// scale up logarithmicly
+	if connsHeap.Len() < proxy.maxConns {
+		if connsHeap.Len() == 0 || int(math.Log(float64(connsHeap.totalLoad()+1))) > connsHeap.Len() {
+			conn, err := net.Dial("tcp", ctx.remoteAddr)
+			if err == nil {
+				newConn := &weightedConn{conn: conn, idx: 0}
+				heap.Push(connsHeap, newConn)
+			}
+			log.Println("scale up", connsHeap.Len())
+		}
+	}
+
+	// get least loaded connection from heap
+	wConn := (*connsHeap)[0]
+	if atomic.LoadInt32(&wConn.disconnected) == 1 {
+		// re-connect if disconnected
+		conn, err := net.Dial("tcp", ctx.remoteAddr)
+		if err != nil {
+			ctx.proxyResponse = proxyErrResponse(err)
+			ctx.baseContext.proc.resumeFromProxy(ctx)
+			return
+		} else {
+			// replace heap top element
+			wConn = &weightedConn{conn: conn, idx: 0}
+			(*connsHeap)[0] = wConn
+		}
+	}
+
+	// successfully loaded connection, bind some vars
+	ctx.wConn = wConn         // ref
+	ctx.connsHeap = connsHeap // ref
+
+	// move data downward from base context
+	baseContext := ctx.baseContext
+
+	// BUG(xtaci): add processing to chunked data
+	contentLength := baseContext.Header.ContentLength()
+	if contentLength < 0 {
+		contentLength = 0
+	}
+
+	// re-marshal requests to raw binary
+	header := baseContext.Header.Header()
+	requests := make([]byte, len(header)+contentLength)
+
+	copy(requests, header)
+	copy(requests[len(baseContext.Header.RawHeaders()):], baseContext.buffer)
+
+	// queue request
+	ctx.wConn.requestList.PushBack(ctx)
+	ctx.request = requests
+
+	if !ctx.wConn.inprog {
+		proxy.watcher.Write(ctx, ctx.wConn.conn, requests)
+		ctx.wConn.inprog = true
+	}
+	heap.Fix(connsHeap, wConn.idx) // heap fix
+
+}
+
+// goroutine to accept new requests
 func (proxy *DelegationProxy) requestScheduler() {
-LOOP:
 	for {
 		select {
-		case ctx := <-proxy.chRequests:
-			var connsHeap *weightedConnsHeap
-			var exists bool
+		case <-proxy.chNotifyNewRequests:
+			var requests []*RemoteContext
+			proxy.newRequestsMu.Lock()
+			requests = proxy.newRequests
+			proxy.newRequests = nil
+			proxy.newRequestsMu.Unlock()
 
-			// create if not initialized
-			connsHeap, exists = proxy.pool[ctx.remoteAddr]
-			if !exists {
-				connsHeap = new(weightedConnsHeap)
-				proxy.pool[ctx.remoteAddr] = connsHeap
+			for k := range requests {
+				proxy.sched(requests[k], false)
 			}
-
-			// add new connections if load is to too high
-			// scale up logarithmicly
-			if connsHeap.Len() < proxy.maxConns && (connsHeap.Len() == 0 || int(math.Log(float64(connsHeap.totalLoad()+1))) > connsHeap.Len()) {
-				conn, err := net.Dial("tcp", ctx.remoteAddr)
-				if err == nil {
-					newConn := &weightedConn{conn: conn, idx: 0}
-					heap.Push(connsHeap, newConn)
-				}
-				log.Println("scale", connsHeap.Len())
-			}
-
-			// get least loaded connection from heap
-			wConn := (*connsHeap)[0]
-			if atomic.LoadInt32(&wConn.disconnected) == 1 {
-				// re-connect if disconnected
-				conn, err := net.Dial("tcp", ctx.remoteAddr)
-				if err != nil {
-					ctx.proxyResponse = proxyErrResponse(err)
-					ctx.baseContext.proc.resumeFromProxy(ctx)
-					continue LOOP
-				} else {
-					// replace heap top element
-					wConn = &weightedConn{conn: conn, idx: 0}
-					(*connsHeap)[0] = wConn
-				}
-			}
-
-			// successfully loaded connection, bind some vars
-			ctx.wConn = wConn         // ref
-			ctx.connsHeap = connsHeap // ref
-
-			// move data downward from base context
-			baseContext := ctx.baseContext
-
-			// BUG(xtaci): add processing to chunked data
-			contentLength := baseContext.Header.ContentLength()
-			if contentLength < 0 {
-				contentLength = 0
-			}
-
-			// re-marshal requests to raw binary
-			header := baseContext.Header.Header()
-			requests := make([]byte, len(header)+contentLength)
-
-			copy(requests, header)
-			copy(requests[len(baseContext.Header.RawHeaders()):], baseContext.buffer)
-
-			// queue request
-			ctx.wConn.requestList.PushBack(ctx)
-			ctx.request = requests
-
-			if !ctx.wConn.inprog {
-				proxy.watcher.Write(ctx, ctx.wConn.conn, requests)
-				ctx.wConn.inprog = true
-			}
-			heap.Fix(connsHeap, wConn.idx) // heap fix
-
 		case ctx := <-proxy.chIOCompleted:
 			// once the request completed, we fix the heap again
 			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
@@ -217,7 +237,7 @@ LOOP:
 				}
 			}
 
-			// check error
+			// marshal response bytes
 			var bts []byte
 			if ctx.err != nil {
 				bts = proxyErrResponse(ctx.err)
@@ -228,7 +248,7 @@ LOOP:
 				bts = resp.Bytes()
 			}
 
-			// send back response
+			// wakeup base context
 			ctx.proxyResponse = bts
 			ctx.baseContext.proc.resumeFromProxy(ctx)
 
@@ -244,18 +264,12 @@ LOOP:
 				if atomic.LoadInt32(&nextContext.wConn.disconnected) == 0 {
 					proxy.watcher.Write(nextContext, nextContext.wConn.conn, nextContext.request)
 				} else {
-					// re-submit the request to re-queue
-					go func() {
-						select {
-						case proxy.chRequests <- nextContext:
-						case <-proxy.die:
-						}
-					}()
+					proxy.sched(nextContext, true)
 				}
 
 			} else {
 				ctx.wConn.inprog = false
-				log.Println("inprog false")
+				//log.Println("inprog false")
 			}
 
 		case <-proxy.die:
