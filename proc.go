@@ -144,7 +144,7 @@ type AsyncHttpProcessor struct {
 	maximumBodySize   int
 
 	// resume signal
-	chResume chan *BaseContext
+	chResume chan *RemoteContext
 }
 
 // Create processor context
@@ -152,7 +152,7 @@ func NewAsyncHttpProcessor(watcher *gaio.Watcher, handler IRequestHandler, limit
 	proc := new(AsyncHttpProcessor)
 	proc.watcher = watcher
 	proc.die = make(chan struct{})
-	proc.chResume = make(chan *BaseContext)
+	proc.chResume = make(chan *RemoteContext)
 	proc.handler = handler
 	proc.limiter = limiter
 
@@ -201,8 +201,18 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 	go func() {
 		for {
 			select {
-			case resumeContext := <-proc.chResume:
-				proc.processRequest(resumeContext)
+			case remoteCtx := <-proc.chResume:
+				localCtx := remoteCtx.baseContext
+				if remoteCtx.respHeader.ConnectionClose() {
+					localCtx.ShouldClose = Close
+				}
+
+				if len(remoteCtx.proxyResponse) > 0 {
+					proc.watcher.Write(localCtx, localCtx.conn, remoteCtx.proxyResponse)
+				}
+
+				proc.processRequest(localCtx)
+
 			case results := <-chResults:
 				for _, res := range results {
 					if ctx, ok := res.Context.(*BaseContext); ok {
@@ -275,14 +285,9 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *BaseContext) {
 
 // resume processing from proxy
 func (proc *AsyncHttpProcessor) resumeFromProxy(proxyCtx *RemoteContext) {
-	localCtx := proxyCtx.baseContext
-	if len(proxyCtx.proxyResponse) > 0 {
-		proc.watcher.Write(localCtx, localCtx.conn, proxyCtx.proxyResponse)
-	}
-
 	// resume state and normal processing
 	select {
-	case proc.chResume <- localCtx:
+	case proc.chResume <- proxyCtx:
 	case <-proc.die:
 	}
 

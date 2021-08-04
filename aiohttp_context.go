@@ -49,7 +49,8 @@ type RemoteContext struct {
 	respHeader    ResponseHeader
 	respData      []byte // response data
 	proxyResponse []byte // proxy response(header + data)
-	err           error  // proxy error
+	err           error
+	done          bool
 
 	// heap data references
 	connsHeap *weightedConnsHeap

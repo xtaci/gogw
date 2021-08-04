@@ -9,7 +9,6 @@ import (
 	"math"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/xtaci/gaio"
@@ -18,9 +17,8 @@ import (
 type weightedConn struct {
 	idx          int
 	conn         net.Conn
-	disconnected int32     // atomic flag to mark whether the connection has disconnected
+	disconnected bool
 	requestList  list.List // pending request list, request will be submitted one by one
-	inprog       bool      // mark if watcher is in progress
 }
 
 // Heaped least used connection
@@ -71,6 +69,8 @@ const (
 //
 //
 type DelegationProxy struct {
+	submit        int
+	directwrite   int
 	dieOnce       sync.Once
 	die           chan struct{}
 	watcher       *gaio.Watcher
@@ -137,7 +137,7 @@ func (proxy *DelegationProxy) Close() {
 }
 
 // sched a new request
-func (proxy *DelegationProxy) sched(ctx *RemoteContext, prepend bool) {
+func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 	var connsHeap *weightedConnsHeap
 	var exists bool
 
@@ -154,7 +154,7 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext, prepend bool) {
 		if connsHeap.Len() == 0 || int(math.Log(float64(connsHeap.totalLoad()+1))) > connsHeap.Len() {
 			conn, err := net.Dial("tcp", ctx.remoteAddr)
 			if err == nil {
-				newConn := &weightedConn{conn: conn, idx: 0}
+				newConn := &weightedConn{conn: conn}
 				heap.Push(connsHeap, newConn)
 			}
 			log.Println("scale up", connsHeap.Len())
@@ -163,17 +163,13 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext, prepend bool) {
 
 	// get least loaded connection from heap
 	wConn := (*connsHeap)[0]
-	if atomic.LoadInt32(&wConn.disconnected) == 1 {
-		// re-connect if disconnected
-		conn, err := net.Dial("tcp", ctx.remoteAddr)
-		if err != nil {
-			ctx.proxyResponse = proxyErrResponse(err)
-			ctx.baseContext.proc.resumeFromProxy(ctx)
-			return
-		} else {
-			// replace heap top element
-			wConn = &weightedConn{conn: conn, idx: 0}
-			(*connsHeap)[0] = wConn
+	if wConn.disconnected { // check if previous ctx has a related dead connection
+		// check if ctx has a related dead connection, re-connect
+		if conn, err := net.Dial("tcp", ctx.remoteAddr); err == nil {
+			// replace previous conn in weightedConn
+			proxy.watcher.Free(wConn.conn)
+			wConn.conn = conn
+			wConn.disconnected = false
 		}
 	}
 
@@ -201,16 +197,25 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext, prepend bool) {
 	ctx.wConn.requestList.PushBack(ctx)
 	ctx.request = requests
 
-	if !ctx.wConn.inprog {
-		proxy.watcher.Write(ctx, ctx.wConn.conn, requests)
-		ctx.wConn.inprog = true
+	// the only request, submit immediately
+	if ctx.wConn.requestList.Len() == 1 {
+		if err := proxy.watcher.Write(ctx, ctx.wConn.conn, requests); err != nil {
+			log.Println("watcher.Write", err)
+			go proxy.notifySchedulerError(ctx, err)
+		}
+		//proxy.directwrite++
+		//log.Println("directwrite", proxy.directwrite)
 	}
 	heap.Fix(connsHeap, wConn.idx) // heap fix
 
+	proxy.submit++
+	log.Println("submit", proxy.submit)
 }
 
 // goroutine to accept new requests
 func (proxy *DelegationProxy) requestScheduler() {
+	var done int
+	//var schedwrite int
 	for {
 		select {
 		case <-proxy.chNotifyNewRequests:
@@ -221,21 +226,15 @@ func (proxy *DelegationProxy) requestScheduler() {
 			proxy.newRequestsMu.Unlock()
 
 			for k := range requests {
-				proxy.sched(requests[k], false)
+				proxy.sched(requests[k])
 			}
 		case ctx := <-proxy.chIOCompleted:
-			// once the request completed, we fix the heap again
-			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
-
-			// scale-down
-			//log.Println("totalload", ctx.wConn.requestList.Len(), ctx.connsHeap.totalLoad())
-			if ctx.connsHeap.Len() > 1 && ctx.wConn.requestList.Len() == 0 {
-				if int(math.Log(float64(ctx.connsHeap.totalLoad()))) < ctx.connsHeap.Len() {
-					heap.Remove(ctx.connsHeap, ctx.wConn.idx)
-					//proxy.watcher.Free(ctx.wConn.conn)
-					//log.Println("scale down", ctx.wConn.load)
-				}
+			done++
+			log.Println("done", done)
+			if ctx.done {
+				continue
 			}
+			ctx.done = true
 
 			// marshal response bytes
 			var bts []byte
@@ -256,20 +255,38 @@ func (proxy *DelegationProxy) requestScheduler() {
 			front := ctx.wConn.requestList.Front()
 			ctx.wConn.requestList.Remove(front)
 
-			// submit new request
+			// we fix the heap again
+			heap.Fix(ctx.connsHeap, ctx.wConn.idx)
+
+			// scale-down if necessary
+			//log.Println("totalload", ctx.wConn.requestList.Len(), ctx.connsHeap.totalLoad())
+			if ctx.connsHeap.Len() > 1 && ctx.wConn.requestList.Len() == 0 {
+				if int(math.Log(float64(ctx.connsHeap.totalLoad()))) < ctx.connsHeap.Len() {
+					proxy.watcher.Free(ctx.wConn.conn)
+					heap.Remove(ctx.connsHeap, ctx.wConn.idx)
+					//log.Println("scale down", ctx.wConn.load)
+				}
+			}
+
+			// submit next request
 			if ctx.wConn.requestList.Len() > 0 {
 				nextContext := ctx.wConn.requestList.Front().Value.(*RemoteContext)
-
-				// check if ctx has a related dead connection
-				if atomic.LoadInt32(&nextContext.wConn.disconnected) == 0 {
-					proxy.watcher.Write(nextContext, nextContext.wConn.conn, nextContext.request)
-				} else {
-					proxy.sched(nextContext, true)
+				if ctx.wConn.disconnected { // check if previous ctx has a related dead connection
+					// check if ctx has a related dead connection, re-connect
+					if conn, err := net.Dial("tcp", nextContext.remoteAddr); err == nil {
+						// replace previous conn in weightedConn
+						proxy.watcher.Free(nextContext.wConn.conn)
+						nextContext.wConn.conn = conn
+						ctx.wConn.disconnected = false
+					}
 				}
 
-			} else {
-				ctx.wConn.inprog = false
-				//log.Println("inprog false")
+				// if reconnection has failed, we still write the request
+				if err := proxy.watcher.Write(nextContext, nextContext.wConn.conn, nextContext.request); err != nil {
+					go proxy.notifySchedulerError(ctx, err)
+				}
+				//schedwrite++
+				//log.Println("schedwrite", schedwrite)
 			}
 
 		case <-proxy.die:
@@ -293,16 +310,9 @@ func (proxy *DelegationProxy) Start() {
 				if ctx, ok := res.Context.(*RemoteContext); ok {
 					if res.Operation == gaio.OpRead {
 						proxy.processResponse(ctx, &res)
-						// error processing
-						if res.Error != nil {
-							proxy.watcher.Free(res.Conn)
-							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
-						}
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
-							proxy.watcher.Free(res.Conn)
 							proxy.notifySchedulerError(ctx, res.Error)
-							atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 						} else {
 							// submit reading
 							ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
@@ -318,31 +328,26 @@ func (proxy *DelegationProxy) Start() {
 // process response
 func (proxy *DelegationProxy) processResponse(ctx *RemoteContext, res *gaio.OpResult) {
 	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
-	//log.Println("body: buffer:", string(ctx.buffer))
 
 	// process header or body
 	switch ctx.protoState {
 	case stateHeader:
 		if err := proxy.procHeader(ctx, res); err != nil {
-			proxy.watcher.Free(res.Conn)
 			proxy.notifySchedulerError(ctx, err)
-			atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 			return
 		}
 	case stateBody:
 		if err := proxy.procBody(ctx, res); err != nil {
-			proxy.watcher.Free(res.Conn)
 			proxy.notifySchedulerError(ctx, err)
-			atomic.StoreInt32(&ctx.wConn.disconnected, 1)
 			return
 		}
 	}
-
 }
 
 // process header fields
 func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, res *gaio.OpResult) error {
 	//log.Println("header: buffer:", string(ctx.buffer))
+	log.Println("procHeader")
 	var headerOK bool
 	for i := ctx.nextCompare; i < len(ctx.buffer); i++ {
 		if ctx.buffer[i] == HeaderEndFlag[ctx.expectedChar] {
@@ -371,17 +376,19 @@ func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, res *gaio.OpResult)
 		ctx.nextCompare = 0
 		ctx.expectedChar = 0
 		ctx.bodyDeadLine = time.Now().Add(proxy.bodyTimeout)
-		proxy.procBody(ctx, res)
+		return proxy.procBody(ctx, res)
 	} else {
 		// incomplete header, submit read again
-		proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
+		if !ctx.wConn.disconnected {
+			return proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
+		}
+		return io.EOF
 	}
-
-	return nil
 }
 
 // process body
 func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) error {
+	log.Println("procBody")
 	contentLength := ctx.respHeader.ContentLength()
 	if contentLength == -1 {
 		// chunked data
@@ -413,9 +420,10 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 			copy(ctx.respData, ctx.buffer)
 		}
 
-	} else if res.Error == io.EOF { // remote actively terminates
+	} else if res.Error != nil { // remote actively terminates
 		ctx.respData = make([]byte, len(ctx.buffer))
 		copy(ctx.respData, ctx.buffer)
+		ctx.wConn.disconnected = true
 	}
 
 	// check if response is ready
@@ -436,7 +444,6 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 // link error
 func (proxy *DelegationProxy) notifySchedulerError(ctx *RemoteContext, err error) {
 	ctx.err = err
-
 	log.Println("notifySchedulerError:", err)
 
 	select {
