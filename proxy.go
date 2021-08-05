@@ -161,6 +161,12 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 		}
 	}
 
+	// connection broken check
+	if connsHeap.Len() == 0 {
+		ctx.proxyResponse = proxyErrResponse(ErrProxyConnect)
+		ctx.baseContext.proc.resumeFromProxy(ctx)
+		return
+	}
 	// get least loaded connection from heap
 	wConn := (*connsHeap)[0]
 

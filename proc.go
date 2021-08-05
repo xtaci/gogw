@@ -206,12 +206,13 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 				//numResumed++
 				localCtx := remoteCtx.baseContext
 				if remoteCtx.respHeader.ConnectionClose() {
-					localCtx.ShouldClose = Close
+					localCtx.CloseAfterWrite = Close
 				}
 
 				//log.Println("numResumed", numResumed)
 				if len(remoteCtx.proxyResponse) > 0 {
 					//	log.Println("numWritten", numResumed)
+					localCtx.numWrites++
 					proc.watcher.Write(localCtx, localCtx.conn, remoteCtx.proxyResponse)
 				}
 
@@ -229,7 +230,9 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 								proc.watcher.Free(res.Conn)
 							}
 						} else if res.Operation == gaio.OpWrite {
-							if res.Error != nil {
+							ctx.numWrites--
+							if res.Error != nil || (ctx.numWrites == 0 && ctx.CloseAfterWrite == Close) {
+								//	log.Println("close after write", res.Error)
 								proc.watcher.Free(res.Conn)
 							}
 						}
@@ -280,10 +283,6 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *BaseContext) {
 		} else {
 			proc.watcher.Read(ctx, ctx.conn, nil) //no need timeout for websocket, only few request
 		}
-	}
-
-	if ctx.ShouldClose == Close {
-		proc.watcher.Free(ctx.conn)
 	}
 }
 
@@ -430,7 +429,7 @@ func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *BaseContext, needHeader bo
 			ctx.Response.Set("Connection", "Keep-Alive")
 		} else {
 			ctx.Response.Set("Connection", "Close")
-			ctx.ShouldClose = Close
+			ctx.CloseAfterWrite = Close
 		}
 
 		//if len(ctx.Response.contentType) == 0{
@@ -438,8 +437,10 @@ func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *BaseContext, needHeader bo
 		//}
 
 		// send back
+		ctx.numWrites++
 		proc.watcher.Write(ctx, ctx.conn, append(ctx.Response.Header(), ctx.ResponseData...))
 	} else {
+		ctx.numWrites++
 		proc.watcher.Write(ctx, ctx.conn, ctx.ResponseData)
 	}
 }
@@ -819,7 +820,7 @@ func (proc *AsyncHttpProcessor) procWS(ctx *BaseContext, conn net.Conn) error {
 
 		data = leftover
 
-		if ctx.ShouldClose == Close {
+		if ctx.CloseAfterWrite == Close {
 			break
 		}
 
@@ -903,7 +904,7 @@ func (ctx *BaseContext) handleWSControlFrame() {
 			wsMsg.CloseCode = int(binary.BigEndian.Uint16(wsMsg.ReqData))
 		}
 		_ = wsCloseHandler(ctx)
-		ctx.ShouldClose = Close
+		ctx.CloseAfterWrite = Close
 	}
 	return
 }

@@ -51,7 +51,7 @@ type RemoteContext struct {
 	proxyResponse []byte // proxy response(header + data)
 	err           error
 	done          bool
-	disconnected  bool // mark if the request has detected a disconnection
+	disconnected  bool
 
 	// heap data references
 	connsHeap *weightedConnsHeap
@@ -90,7 +90,9 @@ type BaseContext struct {
 
 	proc *AsyncHttpProcessor // the processor it belongs to
 
-	ShouldClose int // mark if server should close the connection
+	numWrites int
+
+	CloseAfterWrite int // mark if server should close the connection after latest write
 
 	WSMsg     WSMessage
 	wsHandler WSHandler

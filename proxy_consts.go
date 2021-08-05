@@ -1,6 +1,7 @@
 package aiohttp
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -14,6 +15,10 @@ Connection: Closed
 
 %v
 `
+)
+
+var (
+	ErrProxyConnect = errors.New("cannot connect to remote service")
 )
 
 func proxyErrResponse(err error) []byte {
