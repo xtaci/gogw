@@ -153,8 +153,7 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 	// scale up logarithmicly
 	if connsHeap.Len() < proxy.maxConns {
 		if connsHeap.Len() == 0 || int(math.Log(float64(connsHeap.totalLoad()+1))) > connsHeap.Len() {
-			conn, err := net.Dial("tcp", ctx.remoteAddr)
-			if err == nil {
+			if conn, err := net.Dial("tcp", ctx.remoteAddr); err == nil {
 				newConn := &weightedConn{conn: conn}
 				heap.Push(connsHeap, newConn)
 			}
