@@ -51,6 +51,7 @@ type RemoteContext struct {
 	proxyResponse []byte // proxy response(header + data)
 	err           error
 	done          bool
+	disconnected  bool // mark if the request has detected a disconnection
 
 	// heap data references
 	connsHeap *weightedConnsHeap

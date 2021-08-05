@@ -199,15 +199,19 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 
 	// agent for channeling
 	go func() {
+		//numResumed := 0
 		for {
 			select {
 			case remoteCtx := <-proc.chResume:
+				//numResumed++
 				localCtx := remoteCtx.baseContext
 				if remoteCtx.respHeader.ConnectionClose() {
 					localCtx.ShouldClose = Close
 				}
 
+				//log.Println("numResumed", numResumed)
 				if len(remoteCtx.proxyResponse) > 0 {
+					//	log.Println("numWritten", numResumed)
 					proc.watcher.Write(localCtx, localCtx.conn, remoteCtx.proxyResponse)
 				}
 
