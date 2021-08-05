@@ -299,6 +299,11 @@ func (proxy *DelegationProxy) Start() {
 
 			for _, res := range results {
 				if ctx, ok := res.Context.(*RemoteContext); ok {
+					// mark connection error
+					if res.Error != nil {
+						ctx.disconnected = true
+					}
+
 					if res.Operation == gaio.OpRead {
 						proxy.processResponse(ctx, &res)
 					} else if res.Operation == gaio.OpWrite {
@@ -319,11 +324,6 @@ func (proxy *DelegationProxy) Start() {
 // process response
 func (proxy *DelegationProxy) processResponse(ctx *RemoteContext, res *gaio.OpResult) {
 	ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
-
-	// mark connection error
-	if res.Error != nil {
-		ctx.disconnected = true
-	}
 
 	// process header or body
 	switch ctx.protoState {
