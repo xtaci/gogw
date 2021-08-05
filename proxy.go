@@ -255,7 +255,7 @@ func (proxy *DelegationProxy) requestScheduler() {
 				if int(math.Log(float64(ctx.connsHeap.totalLoad()))) < ctx.connsHeap.Len() {
 					proxy.watcher.Free(ctx.wConn.conn)
 					heap.Remove(ctx.connsHeap, ctx.wConn.idx)
-					log.Println("scale down", ctx.wConn.requestList.Len())
+					log.Println("scale down", ctx.connsHeap.Len())
 				}
 			}
 
