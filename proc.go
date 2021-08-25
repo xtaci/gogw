@@ -222,11 +222,13 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 				for _, res := range results {
 					if ctx, ok := res.Context.(*BaseContext); ok {
 						if res.Operation == gaio.OpRead {
+							//log.Println("Read from ", res.Conn.RemoteAddr(), len(ctx.buffer))
 							if res.Error == nil {
 								// read into buffer
 								ctx.buffer = append(ctx.buffer, res.Buffer[:res.Size]...)
 								proc.processRequest(ctx)
 							} else {
+								//log.Println("Read error ", res.Conn.RemoteAddr(), res.Error)
 								proc.watcher.Free(res.Conn)
 							}
 						} else if res.Operation == gaio.OpWrite {
@@ -379,6 +381,7 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *BaseContext) error {
 		// toggle to process header
 		return proc.procBody(ctx)
 	} else {
+		ctx.headerDeadLine = time.Now().Add(proc.headerTimeout)
 		proc.watcher.ReadTimeout(ctx, ctx.conn, nil, ctx.headerDeadLine)
 	}
 

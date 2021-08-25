@@ -159,6 +159,8 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 			}
 			log.Println("scale up", connsHeap.Len())
 		}
+	} else {
+		log.Println("over maxConns", connsHeap.Len())
 	}
 
 	// connection broken check
@@ -203,6 +205,7 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 		//log.Println("directwrite", proxy.directwrite)
 	}
 	heap.Fix(connsHeap, wConn.idx) // heap fix
+	//log.Println("send data to proxy ", ctx.remoteAddr, ctx.wConn.conn, ctx.wConn.requestList.Len())
 
 	proxy.submit++
 	//log.Println("submit", proxy.submit)
@@ -310,6 +313,7 @@ func (proxy *DelegationProxy) Start() {
 						ctx.disconnected = true
 					}
 
+					//log.Println("proxy start gaio.result ", res.Operation, ctx.wConn.conn, res.Error, len(res.Buffer))
 					if res.Operation == gaio.OpRead {
 						proxy.processResponse(ctx, &res)
 					} else if res.Operation == gaio.OpWrite {
@@ -370,6 +374,10 @@ func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, res *gaio.OpResult)
 			return err
 		}
 
+		if ctx.respHeader.ConnectionClose() == true {
+			ctx.disconnected = true
+		}
+
 		// since header has parsed, remove header bytes now
 		ctx.buffer = ctx.buffer[respHeaderSize:]
 
@@ -380,6 +388,7 @@ func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, res *gaio.OpResult)
 		ctx.bodyDeadLine = time.Now().Add(proxy.bodyTimeout)
 		return proxy.procBody(ctx, res)
 	} else if res.Error == nil { // incomplete header, submit read again
+		ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
 		return proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.headerDeadLine)
 	} else {
 		return res.Error
