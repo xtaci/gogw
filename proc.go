@@ -367,11 +367,13 @@ func (proc *AsyncHttpProcessor) procHeader(ctx *BaseContext) error {
 
 			if ctx.Response.StatusCode() == StatusOK {
 				proc.WriteHttpRspData(ctx, false) // special header, already done
+				ctx.WSMsg = &WSMessage{}
 				ctx.protoState = stateWS
 			} else {
 				proc.WriteHttpRspData(ctx, true)
 			}
 
+			proc.watcher.Read(ctx, ctx.conn, nil)
 			return nil
 		}
 
@@ -787,7 +789,7 @@ func (proc *AsyncHttpProcessor) procWS(ctx *BaseContext, conn net.Conn) error {
 		if ctx.WSMsg.RspHeader == nil {
 			ctx.WSMsg.RspHeader = make([]byte, 0, maxFrameHeaderSize)
 		}
-		wsMsg := &ctx.WSMsg
+		wsMsg := ctx.WSMsg
 		leftover, err := proc.parseWSReq(data, wsMsg)
 		if err != nil {
 			// 请求异常
@@ -896,7 +898,7 @@ const (
 )
 
 func (ctx *BaseContext) handleWSControlFrame() {
-	wsMsg := &ctx.WSMsg
+	wsMsg := ctx.WSMsg
 	switch wsMsg.MessageType {
 	case PingMessage:
 		_ = wsPinghandler(ctx)

@@ -94,6 +94,6 @@ type BaseContext struct {
 
 	CloseAfterWrite int // mark if server should close the connection after latest write
 
-	WSMsg     WSMessage
+	WSMsg     *WSMessage
 	wsHandler WSHandler
 }
