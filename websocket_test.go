@@ -110,7 +110,7 @@ func home(ctx *BaseContext) error {
 }
 
 func echo(ctx *BaseContext) error {
-	wsMSG := &ctx.WSMsg
+	wsMSG := ctx.WSMsg
 	wsMSG.RspData = append(wsMSG.RspData, wsMSG.ReqData...)
 	wsMSG.MessageType = TextMessage
 
@@ -127,7 +127,7 @@ func echo(ctx *BaseContext) error {
 			msg.RspHeader = make([]byte, 0, maxFrameHeaderSize)
 			ctx.proc.writeWSRspData(ctx, ctx.conn, &msg)
 			if i == 12 {
-				msg.RspData = append(msg.RspData, []byte(strconv.Itoa(i)+" push stop "+rspdata)...)
+				msg.RspData = append(msg.RspData, []byte(strconv.Itoa(i+1)+" push stop "+rspdata)...)
 				msg.MessageType = TextMessage
 				msg.RspHeader = make([]byte, 0, maxFrameHeaderSize)
 				ctx.proc.writeWSRspData(ctx, ctx.conn, &msg)
