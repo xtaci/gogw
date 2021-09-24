@@ -186,11 +186,11 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 	}
 
 	// re-marshal requests to raw binary
-	header := baseContext.Header.RawHeaders()
+	header := baseContext.Header.Header()
 	requests := make([]byte, len(header)+contentLength)
 
 	copy(requests, header)
-	copy(requests[len(baseContext.Header.RawHeaders()):], baseContext.buffer)
+	copy(requests[len(header):], baseContext.buffer)
 
 	// queue request
 	ctx.wConn.requestList.PushBack(ctx)
