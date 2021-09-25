@@ -417,23 +417,24 @@ func (proc *AsyncHttpProcessor) procBody(ctx *BaseContext) error {
 		return err
 	}
 
-	// behavior based on resposne type
-	if ctx.protoState != stateProxy {
-		// discard buffer
-		if ctx.Header.ContentLength() > 0 {
-			ctx.buffer = ctx.buffer[ctx.Header.ContentLength():]
-		}
-
-		// set read state
-		ctx.protoState = stateHeader
-		ctx.nextCompare = 0
-		ctx.expectedChar = 0
-
-		proc.WriteHttpRspData(ctx, true)
-		// toggle to process header
-		return proc.procHeader(ctx)
+	// if it's a proxied request, stop here
+	if ctx.protoState == stateProxy {
+		return nil
 	}
-	return nil
+
+	// discard buffer
+	if ctx.Header.ContentLength() > 0 {
+		ctx.buffer = ctx.buffer[ctx.Header.ContentLength():]
+	}
+
+	// set read state
+	ctx.protoState = stateHeader
+	ctx.nextCompare = 0
+	ctx.expectedChar = 0
+
+	proc.WriteHttpRspData(ctx, true)
+	// toggle to process header
+	return proc.procHeader(ctx)
 }
 
 func (proc *AsyncHttpProcessor) WriteHttpRspData(ctx *BaseContext, needHeader bool) {

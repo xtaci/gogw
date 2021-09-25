@@ -86,7 +86,7 @@ type DelegationProxy struct {
 
 	pool map[string]*weightedConnsHeap // URI -> heap
 
-	submit int
+	numSubmit int
 	// directwrite   int
 }
 
@@ -157,10 +157,10 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 				newConn := &weightedConn{conn: conn}
 				heap.Push(connsHeap, newConn)
 			}
-			log.Println("scale up", connsHeap.Len())
+			//log.Println("scale up", connsHeap.Len())
 		}
 	} else {
-		log.Println("over maxConns", connsHeap.Len())
+		//log.Println("over maxConns", connsHeap.Len())
 	}
 
 	// connection broken check
@@ -208,7 +208,7 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 	heap.Fix(connsHeap, wConn.idx) // heap fix
 	//log.Println("send data to proxy ", ctx.remoteAddr, ctx.wConn.conn, ctx.wConn.requestList.Len())
 
-	proxy.submit++
+	proxy.numSubmit++
 	//log.Println("submit", proxy.submit)
 }
 
@@ -240,7 +240,7 @@ func (proxy *DelegationProxy) requestScheduler() {
 			var bts []byte
 			if ctx.err != nil {
 				bts = proxyErrResponse(ctx.err)
-			} else if len(ctx.respData) >= 0 {
+			} else if len(ctx.respData) > 0 || ctx.respHeader.ContentLength() == 0 {
 				var resp bytes.Buffer
 				resp.Write(ctx.respHeader.Header())
 				resp.Write(ctx.respData)
@@ -264,7 +264,7 @@ func (proxy *DelegationProxy) requestScheduler() {
 				if int(math.Log(float64(ctx.connsHeap.totalLoad()))) < ctx.connsHeap.Len() {
 					proxy.watcher.Free(ctx.wConn.conn)
 					heap.Remove(ctx.connsHeap, ctx.wConn.idx)
-					log.Println("scale down", ctx.connsHeap.Len())
+					//		log.Println("scale down", ctx.connsHeap.Len())
 				}
 			}
 
