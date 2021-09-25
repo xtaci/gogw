@@ -65,6 +65,9 @@ func main() {
 	testDelegates := `
 /debug/pprof
 127.0.0.1:6060
+
+/post.*
+127.0.0.1:8080
 `
 
 	var err error
@@ -77,7 +80,7 @@ func main() {
 	proxy.Start()
 
 	for i := 0; i < numServer; i++ {
-		server, err := aiohttp.NewServer(":8080", 256*1024*1024, handler, nil)
+		server, err := aiohttp.NewServer(":8081", 256*1024*1024, handler, nil)
 		if err != nil {
 			panic(err)
 		}

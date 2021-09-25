@@ -114,7 +114,7 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 // Delegate queues a request for sequential remote accessing
 func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext) error {
 	// create delegated request context
-	ctx.awaitRemote = true
+	ctx.protoState = stateProxy
 	proxyContext := new(RemoteContext)
 	proxyContext.baseContext = ctx
 	proxyContext.remoteAddr = remoteAddr
@@ -192,6 +192,7 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 	copy(requests, header)
 	copy(requests[len(header):], baseContext.buffer)
 
+	//log.Println("REQ:\n", string(requests))
 	// queue request
 	ctx.wConn.requestList.PushBack(ctx)
 	ctx.request = requests
@@ -239,7 +240,7 @@ func (proxy *DelegationProxy) requestScheduler() {
 			var bts []byte
 			if ctx.err != nil {
 				bts = proxyErrResponse(ctx.err)
-			} else if len(ctx.respData) > 0 {
+			} else if len(ctx.respData) >= 0 {
 				var resp bytes.Buffer
 				resp.Write(ctx.respHeader.Header())
 				resp.Write(ctx.respData)
@@ -423,7 +424,7 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 			hasResponse = true
 		}
 
-	} else if contentLength > 0 {
+	} else if contentLength >= 0 {
 		// read body data
 		if len(ctx.buffer) >= contentLength {
 			// notify request scheduler
@@ -438,6 +439,9 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 		copy(ctx.respData, ctx.buffer)
 		hasResponse = true
 	}
+
+	//log.Println("RESPDATA:\r\n", string(ctx.respData), "\r\n")
+	//log.Println("LEN:", len(ctx.buffer), "clen:", contentLength, "has", hasResponse, "\r\n")
 
 	// check if response is ready
 	if hasResponse {

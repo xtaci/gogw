@@ -66,9 +66,6 @@ type RemoteContext struct {
 type BaseContext struct {
 	conn net.Conn // client connection
 
-	// mark waiting for remote response
-	awaitRemote bool // mark if request has trapped to proxy
-
 	protoState   int   // the state for reading
 	expectedChar uint8 // fast indexing for end of header
 	nextCompare  int

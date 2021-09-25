@@ -25,6 +25,7 @@ var (
 const (
 	stateHeader = iota
 	stateBody
+	stateProxy
 	stateWS // 升级为了websocket
 )
 
@@ -216,6 +217,17 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 					proc.watcher.Write(localCtx, localCtx.conn, remoteCtx.proxyResponse)
 				}
 
+				// set to read state
+				localCtx.protoState = stateHeader
+				localCtx.nextCompare = 0
+				localCtx.expectedChar = 0
+
+				// discard previous buffer
+				if localCtx.Header.ContentLength() > 0 {
+					localCtx.buffer = localCtx.buffer[localCtx.Header.ContentLength():]
+				}
+
+				// continue to process requests
 				proc.processRequest(localCtx)
 
 			case results := <-chResults:
@@ -269,7 +281,6 @@ func (proc *AsyncHttpProcessor) SetBodyMaximumSize(size int) {
 
 // process request
 func (proc *AsyncHttpProcessor) processRequest(ctx *BaseContext) {
-	ctx.awaitRemote = false
 	// process header or body
 	if ctx.protoState == stateHeader {
 		if err := proc.procHeader(ctx); err != nil {
@@ -285,6 +296,8 @@ func (proc *AsyncHttpProcessor) processRequest(ctx *BaseContext) {
 		} else {
 			proc.watcher.Read(ctx, ctx.conn, nil) //no need timeout for websocket, only few request
 		}
+	} else if ctx.protoState == stateProxy {
+		// do nothing
 	}
 }
 
@@ -404,18 +417,18 @@ func (proc *AsyncHttpProcessor) procBody(ctx *BaseContext) error {
 		return err
 	}
 
-	// discard buffer
-	if ctx.Header.ContentLength() > 0 {
-		ctx.buffer = ctx.buffer[ctx.Header.ContentLength():]
-	}
-
-	// set read state
-	ctx.protoState = stateHeader
-	ctx.nextCompare = 0
-	ctx.expectedChar = 0
-
 	// behavior based on resposne type
-	if !ctx.awaitRemote {
+	if ctx.protoState != stateProxy {
+		// discard buffer
+		if ctx.Header.ContentLength() > 0 {
+			ctx.buffer = ctx.buffer[ctx.Header.ContentLength():]
+		}
+
+		// set read state
+		ctx.protoState = stateHeader
+		ctx.nextCompare = 0
+		ctx.expectedChar = 0
+
 		proc.WriteHttpRspData(ctx, true)
 		// toggle to process header
 		return proc.procHeader(ctx)
