@@ -347,9 +347,9 @@ func (proxy *DelegationProxy) Start() {
 						proxy.processResponse(ctx, &res)
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
-							ctx.retries++
-							if ctx.retries <= defaultMaximumWriteRetry {
+							if ctx.retries < defaultMaximumWriteRetry {
 								proxy.retryRequest(ctx, res.Error)
+								ctx.retries++
 							} else {
 								proxy.notifySchedulerError(ctx, res.Error)
 							}
