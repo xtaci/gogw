@@ -206,7 +206,7 @@ func (proc *AsyncHttpProcessor) StartProcessor() {
 			case remoteCtx := <-proc.chResume:
 				//numResumed++
 				localCtx := remoteCtx.baseContext
-				if remoteCtx.respHeader.ConnectionClose() {
+				if remoteCtx.RespHeader.ConnectionClose() {
 					localCtx.CloseAfterWrite = Close
 				}
 

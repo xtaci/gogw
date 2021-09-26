@@ -61,6 +61,9 @@ const (
 	defaultMaximumWriteRetry     = 5
 )
 
+// DelegateCallback defines a function when a remote call completes
+type DelegateCallback func(*RemoteContext) error
+
 // Delegation Proxy delegates a special conn to remote,
 // and redirect it's IO to original connection:
 //
@@ -115,10 +118,11 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 }
 
 // Delegate queues a request for sequential remote accessing
-func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext) error {
+func (proxy *DelegationProxy) Delegate(remoteAddr string, ctx *BaseContext, callback DelegateCallback) error {
 	// create delegated request context
 	ctx.protoState = stateProxy
 	proxyContext := new(RemoteContext)
+	proxyContext.callback = callback
 	proxyContext.baseContext = ctx
 	proxyContext.remoteAddr = remoteAddr
 	proxyContext.protoState = stateHeader
@@ -268,10 +272,16 @@ func (proxy *DelegationProxy) requestScheduler() {
 			var bts []byte
 			if ctx.err != nil {
 				bts = proxyErrResponse(ctx.err)
-			} else if len(ctx.respData) > 0 || ctx.respHeader.ContentLength() == 0 {
+			} else if len(ctx.RespData) > 0 || ctx.RespHeader.ContentLength() == 0 {
+				// call back for normal requests
+				// users can manipulate RespHeader & RespData before returning
+				if ctx.callback != nil {
+					ctx.callback(ctx)
+				}
+
 				var resp bytes.Buffer
-				resp.Write(ctx.respHeader.Header())
-				resp.Write(ctx.respData)
+				resp.Write(ctx.RespHeader.Header())
+				resp.Write(ctx.RespData)
 				bts = resp.Bytes()
 			}
 
@@ -403,12 +413,12 @@ func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, res *gaio.OpResult)
 	ctx.nextCompare = len(ctx.buffer)
 
 	if headerOK {
-		respHeaderSize, err := ctx.respHeader.parse(ctx.buffer)
+		respHeaderSize, err := ctx.RespHeader.parse(ctx.buffer)
 		if err != nil {
 			return err
 		}
 
-		if ctx.respHeader.ConnectionClose() == true {
+		if ctx.RespHeader.ConnectionClose() == true {
 			ctx.disconnected = true
 		}
 
@@ -432,7 +442,7 @@ func (proxy *DelegationProxy) procHeader(ctx *RemoteContext, res *gaio.OpResult)
 // process body
 func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) error {
 	//	log.Println("procBody")
-	contentLength := ctx.respHeader.ContentLength()
+	contentLength := ctx.RespHeader.ContentLength()
 	hasResponse := false
 	if contentLength == -1 {
 		// chunked data
@@ -452,8 +462,8 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 		ctx.nextCompare = len(ctx.buffer)
 
 		if dataOK {
-			ctx.respData = make([]byte, len(ctx.buffer))
-			copy(ctx.respData, ctx.buffer)
+			ctx.RespData = make([]byte, len(ctx.buffer))
+			copy(ctx.RespData, ctx.buffer)
 			hasResponse = true
 		}
 
@@ -461,15 +471,15 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 		// read body data
 		if len(ctx.buffer) >= contentLength {
 			// notify request scheduler
-			ctx.respData = make([]byte, contentLength)
-			copy(ctx.respData, ctx.buffer)
+			ctx.RespData = make([]byte, contentLength)
+			copy(ctx.RespData, ctx.buffer)
 			hasResponse = true
 		}
 
 	} else if res.Error == io.EOF { // remote actively terminates
 		// handling of connection:close
-		ctx.respData = make([]byte, len(ctx.buffer))
-		copy(ctx.respData, ctx.buffer)
+		ctx.RespData = make([]byte, len(ctx.buffer))
+		copy(ctx.RespData, ctx.buffer)
 		hasResponse = true
 	}
 

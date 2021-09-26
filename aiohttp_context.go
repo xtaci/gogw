@@ -35,6 +35,7 @@ type WSMessage struct {
 // RemoteContext defines the context for a single remote request
 type RemoteContext struct {
 	baseContext *BaseContext
+	callback    DelegateCallback
 
 	request      []byte
 	remoteAddr   string // remote service URI
@@ -46,8 +47,8 @@ type RemoteContext struct {
 	buffer []byte
 
 	// remote response
-	respHeader    ResponseHeader
-	respData      []byte // response data
+	RespHeader    ResponseHeader
+	RespData      []byte // response data
 	proxyResponse []byte // proxy response(header + data)
 	err           error
 	done          bool
