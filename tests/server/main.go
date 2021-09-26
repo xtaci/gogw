@@ -30,6 +30,8 @@ func handler(ctx *aiohttp.BaseContext) error {
 	if err != nil {
 		return err
 	}
+	ctx.Response.Add("a", "b")
+	ctx.Header.Add("key", "value")
 
 	// check if it's delegated URI
 	if remote, ok := proxyConfig.Match(&URI); ok {

@@ -195,7 +195,7 @@ func (proxy *DelegationProxy) sched(ctx *RemoteContext) {
 	copy(requests, header)
 	copy(requests[len(header):], baseContext.buffer)
 
-	//log.Println("REQ:\n", string(requests))
+	// log.Println("REQ:\n", string(requests))
 	// queue request
 	ctx.wConn.requestList.PushBack(ctx)
 	ctx.request = requests
