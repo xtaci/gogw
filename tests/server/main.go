@@ -35,7 +35,12 @@ func handler(ctx *aiohttp.BaseContext) error {
 
 	// check if it's delegated URI
 	if remote, ok := proxyConfig.Match(&URI); ok {
-		proxy.Delegate(remote, ctx, nil)
+		dummy := func(ctx *aiohttp.RemoteContext) error {
+			log.Println(string(ctx.RespHeader.Header()))
+			return nil
+		}
+
+		proxy.Delegate(remote, ctx, dummy)
 		return nil
 	} else {
 		path := string(URI.Path())
