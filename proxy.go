@@ -58,6 +58,7 @@ func (h *weightedConnsHeap) totalLoad() (totalLoad int) {
 
 const (
 	defaultMaximumURIConnections = 128
+	defaultMaximumWriteRetry     = 5
 )
 
 // Delegation Proxy delegates a special conn to remote,
@@ -80,6 +81,7 @@ type DelegationProxy struct {
 
 	chNotifyNewRequests chan struct{}
 	chIOCompleted       chan *RemoteContext
+	chIORetry           chan *RemoteContext
 
 	// metrics
 	maxConns int // maximum connections for a single URI
@@ -107,6 +109,7 @@ func NewDelegationProxy(bufSize int) (*DelegationProxy, error) {
 	proxy.pool = make(map[string]*weightedConnsHeap)
 	proxy.chNotifyNewRequests = make(chan struct{}, 1)
 	proxy.chIOCompleted = make(chan *RemoteContext)
+	proxy.chIORetry = make(chan *RemoteContext)
 	proxy.die = make(chan struct{})
 	return proxy, nil
 }
@@ -228,6 +231,31 @@ func (proxy *DelegationProxy) requestScheduler() {
 			for k := range requests {
 				proxy.sched(requests[k])
 			}
+		case ctx := <-proxy.chIORetry:
+			//  reconnect and retry
+			if conn, err := net.Dial("tcp", ctx.remoteAddr); err == nil {
+				proxy.watcher.Free(ctx.wConn.conn)
+				ctx.wConn.conn = conn
+			}
+
+			baseContext := ctx.baseContext
+			contentLength := baseContext.Header.ContentLength()
+			if contentLength < 0 {
+				contentLength = 0
+			}
+
+			// re-marshal requests to raw binary
+			header := baseContext.Header.Header()
+			requests := make([]byte, len(header)+contentLength)
+
+			copy(requests, header)
+			copy(requests[len(header):], baseContext.buffer)
+
+			// submit write again
+			if err := proxy.watcher.Write(ctx, ctx.wConn.conn, requests); err != nil {
+				go proxy.notifySchedulerError(ctx, err)
+			}
+
 		case ctx := <-proxy.chIOCompleted:
 			numDone++
 			//log.Println("numdone", numDone)
@@ -319,7 +347,12 @@ func (proxy *DelegationProxy) Start() {
 						proxy.processResponse(ctx, &res)
 					} else if res.Operation == gaio.OpWrite {
 						if res.Error != nil {
-							proxy.notifySchedulerError(ctx, res.Error)
+							ctx.retries++
+							if ctx.retries <= defaultMaximumWriteRetry {
+								proxy.retryRequest(ctx, res.Error)
+							} else {
+								proxy.notifySchedulerError(ctx, res.Error)
+							}
 						} else {
 							// submit reading
 							ctx.headerDeadLine = time.Now().Add(proxy.headerTimeout)
@@ -457,6 +490,16 @@ func (proxy *DelegationProxy) procBody(ctx *RemoteContext, res *gaio.OpResult) e
 		return proxy.watcher.ReadTimeout(ctx, res.Conn, nil, ctx.bodyDeadLine)
 	} else {
 		return res.Error
+	}
+}
+
+// retry request
+func (proxy *DelegationProxy) retryRequest(ctx *RemoteContext, err error) {
+	log.Println("retryRequest:", err)
+	select {
+	case proxy.chIORetry <- ctx:
+	case <-proxy.die:
+		return
 	}
 }
 

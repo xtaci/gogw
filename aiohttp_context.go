@@ -52,6 +52,7 @@ type RemoteContext struct {
 	err           error
 	done          bool
 	disconnected  bool
+	retries       int
 
 	// heap data references
 	connsHeap *weightedConnsHeap
