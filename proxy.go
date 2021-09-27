@@ -283,6 +283,7 @@ func (proxy *DelegationProxy) requestScheduler() {
 				resp.Write(ctx.RespHeader.Header())
 				resp.Write(ctx.RespData)
 				bts = resp.Bytes()
+				log.Println(string(bts))
 			}
 
 			// wakeup base context
