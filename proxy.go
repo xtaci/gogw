@@ -1,4 +1,4 @@
-package aiohttp
+package gogw
 
 import (
 	"bytes"
@@ -283,7 +283,7 @@ func (proxy *DelegationProxy) requestScheduler() {
 				resp.Write(ctx.RespHeader.Header())
 				resp.Write(ctx.RespData)
 				bts = resp.Bytes()
-				log.Println(string(bts))
+				//log.Println(string(bts))
 			}
 
 			// wakeup base context

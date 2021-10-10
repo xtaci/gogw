@@ -1,4 +1,4 @@
-package aiohttp
+package gogw
 
 // 此文件针对websocket的控制帧、大数据做进一步测试
 
@@ -6,12 +6,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 var echoReqBody = []byte(`

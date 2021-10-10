@@ -1,6 +1,6 @@
 // +build amd64 arm64 ppc64 ppc64le
 
-package aiohttp
+package gogw
 
 const (
 	maxHexIntChars = 15

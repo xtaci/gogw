@@ -1,4 +1,4 @@
-package aiohttp
+package gogw
 
 var (
 	defaultServerName  = []byte("fasthttp")

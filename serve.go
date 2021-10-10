@@ -1,4 +1,4 @@
-package aiohttp
+package gogw
 
 import (
 	reuse "github.com/libp2p/go-reuseport"

@@ -1,4 +1,4 @@
-package aiohttp
+package gogw
 
 // HTTP methods were copied from net/http.
 const (

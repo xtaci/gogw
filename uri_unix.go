@@ -1,6 +1,6 @@
 // +build !windows
 
-package aiohttp
+package gogw
 
 func addLeadingSlash(dst, src []byte) []byte {
 	// add leading slash for unix paths

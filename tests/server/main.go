@@ -7,7 +7,7 @@ import (
 	_ "net/http/pprof"
 	"strings"
 
-	"github.com/xtaci/aiohttp"
+	"github.com/xtaci/gogw"
 )
 
 var (
@@ -15,17 +15,17 @@ var (
 )
 
 var (
-	proxy       *aiohttp.DelegationProxy
-	proxyConfig *aiohttp.ProxyConfig
+	proxy       *gogw.DelegationProxy
+	proxyConfig *gogw.ProxyConfig
 )
 
 var (
-	dummyData = make([]byte, 32768)
+	dummyData = make([]byte, 16)
 )
 
-func handler(ctx *aiohttp.BaseContext) error {
+func handler(ctx *gogw.BaseContext) error {
 	// parse URI
-	var URI aiohttp.URI // current incoming request's URL
+	var URI gogw.URI // current incoming request's URL
 	err := URI.Parse(nil, ctx.Header.RequestURI())
 	if err != nil {
 		return err
@@ -33,8 +33,8 @@ func handler(ctx *aiohttp.BaseContext) error {
 
 	// check if it's delegated URI
 	if remote, ok := proxyConfig.Match(&URI); ok {
-		dummy := func(ctx *aiohttp.RemoteContext) error {
-			log.Println(string(ctx.RespHeader.Header()))
+		dummy := func(ctx *gogw.RemoteContext) error {
+			//	log.Println(string(ctx.RespHeader.Header()))
 			ctx.RespHeader.Add("a", "b")
 			ctx.RespData = []byte("hello")
 			ctx.RespHeader.SetContentLength(len(ctx.RespData))
@@ -80,15 +80,15 @@ func main() {
 
 	var err error
 	reader := strings.NewReader(testDelegates)
-	proxyConfig, err = aiohttp.ParseProxyConfig(reader)
-	proxy, err = aiohttp.NewDelegationProxy(1024 * 1024)
+	proxyConfig, err = gogw.ParseProxyConfig(reader)
+	proxy, err = gogw.NewDelegationProxy(1024 * 1024)
 	if err != nil {
 		panic(err)
 	}
 	proxy.Start()
 
 	for i := 0; i < numServer; i++ {
-		server, err := aiohttp.NewServer(":8081", 256*1024*1024, handler, nil)
+		server, err := gogw.NewServer(":8081", 256*1024*1024, handler, nil)
 		if err != nil {
 			panic(err)
 		}

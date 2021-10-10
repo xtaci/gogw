@@ -8,16 +8,16 @@ import (
 	_ "net/http/pprof"
 	"strings"
 
-	"github.com/xtaci/aiohttp"
+	"github.com/xtaci/gogw"
 )
 
 var (
 	errPath = errors.New("incorrect path")
 )
 
-func handler(ctx *aiohttp.BaseContext) error {
+func handler(ctx *gogw.BaseContext) error {
 	// parse URI
-	var URI aiohttp.URI // current incoming request's URL
+	var URI gogw.URI // current incoming request's URL
 	err := URI.Parse(nil, ctx.Header.RequestURI())
 	if err != nil {
 		return err
@@ -50,13 +50,13 @@ func main() {
 
 	reader := bufio.NewReader(strings.NewReader(testString))
 
-	limiter, err := aiohttp.ParseRegexLimiter(reader)
+	limiter, err := gogw.ParseRegexLimiter(reader)
 	if err != nil {
 		panic(err)
 	}
 
 	for i := 0; i < numServer; i++ {
-		server, err := aiohttp.NewServer(":8080", 256*1024*1024, handler, limiter)
+		server, err := gogw.NewServer(":8080", 256*1024*1024, handler, limiter)
 		if err != nil {
 			panic(err)
 		}

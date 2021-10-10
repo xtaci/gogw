@@ -1,6 +1,6 @@
 //go:generate go run bytesconv_table_gen.go
 
-package aiohttp
+package gogw
 
 import (
 	"bufio"
